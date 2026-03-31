@@ -47,14 +47,17 @@
    * @property {number[]} values
    * @property {number[]} animated   - current animated values (lerped toward `values`)
    * @property {boolean}  visible
-   * @property {number}   x          - left edge in overlay px (0 = left of stage)
-   * @property {number}   y          - top edge in overlay px  (0 = top of stage)
+   * @property {number}   x            - centre X in overlay px
+   * @property {number}   y            - centre Y in overlay px
    * @property {number}   width
    * @property {number}   height
    * @property {string}   title
-   * @property {string[]} palette    - hex colours for data series
+   * @property {string[]} palette      - colours for data series
    * @property {string}   bgColor
    * @property {string}   textColor
+   * @property {number}   animDuration - animation duration in ms
+   * @property {number[]} animStartVals  - animated value at the start of each point's animation
+   * @property {number[]} animStartTimes - DOMHighResTimeStamp when each point's animation began
    */
 
   /** Return coordinates scaled from Scratch stage units to overlay pixels. */
@@ -92,6 +95,9 @@
     labels: [],
     values: [],
     animated: [],
+    animStartVals: [],
+    animStartTimes: [],
+    animDuration: 500,
     visible: true,
     x: 20,
     y: 20,
@@ -107,20 +113,24 @@
   let rafId = null;
   let needsRedraw = false;
 
-  const LERP_SPEED = 0.15;
+  /** Smooth ease-in-out cubic: slow start, fast middle, slow end. */
+  const easeInOutCubic = (t) =>
+    t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
-  const lerp = (a, b, t) => a + (b - a) * t;
-
-  const animationStep = () => {
+  const animationStep = (timestamp) => {
     let stillAnimating = false;
     for (const g of graphs.values()) {
       if (!g.visible) continue;
       for (let i = 0; i < g.values.length; i++) {
         const target = g.values[i];
-        const cur = g.animated[i] ?? 0;
-        const next = lerp(cur, target, LERP_SPEED);
-        g.animated[i] = Math.abs(next - target) < 0.001 ? target : next;
-        if (g.animated[i] !== target) stillAnimating = true;
+        const startVal = g.animStartVals[i] ?? target;
+        const startTime = g.animStartTimes[i] ?? timestamp;
+        const t =
+          g.animDuration > 0
+            ? Math.min(1, (timestamp - startTime) / g.animDuration)
+            : 1;
+        g.animated[i] = startVal + (target - startVal) * easeInOutCubic(t);
+        if (t < 1) stillAnimating = true;
       }
     }
 
@@ -740,6 +750,23 @@
               },
             },
           },
+          {
+            opcode: "setAnimDuration",
+            blockType: Scratch.BlockType.COMMAND,
+            text: Scratch.translate(
+              "set animation duration of graph [NAME] to [MS] ms"
+            ),
+            arguments: {
+              NAME: {
+                type: Scratch.ArgumentType.STRING,
+                defaultValue: "myGraph",
+              },
+              MS: {
+                type: Scratch.ArgumentType.NUMBER,
+                defaultValue: 500,
+              },
+            },
+          },
           "---",
           // ── Reporters ─────────────────────────────────────────────────
           {
@@ -852,10 +879,16 @@
       const labels = parseArray(String(LABELS)).map(String);
       const values = parseNumbers(String(VALUES));
       const len = Math.min(labels.length, values.length);
+      const now = performance.now();
+      const newValues = values.slice(0, len);
       g.labels = labels.slice(0, len);
-      g.values = values.slice(0, len);
-      // Initialise animated to previous animated values where possible
-      g.animated = g.values.map((v, i) => (g.animated[i] !== undefined ? g.animated[i] : v));
+      // For existing points keep the current animated position as the start; new points grow from 0.
+      g.animStartVals = newValues.map((_, i) =>
+        g.animated[i] !== undefined ? g.animated[i] : 0
+      );
+      g.animated = g.animStartVals.slice();
+      g.animStartTimes = newValues.map(() => now);
+      g.values = newValues;
       scheduleRedraw();
     }
 
@@ -865,12 +898,17 @@
       const label = String(LABEL);
       const value = Scratch.Cast.toNumber(VALUE);
       const idx = g.labels.indexOf(label);
+      const now = performance.now();
       if (idx >= 0) {
+        g.animStartVals[idx] = g.animated[idx] ?? g.values[idx];
+        g.animStartTimes[idx] = now;
         g.values[idx] = value;
       } else {
         g.labels.push(label);
         g.values.push(value);
         g.animated.push(0);
+        g.animStartVals.push(0);
+        g.animStartTimes.push(now);
       }
       scheduleRedraw();
     }
@@ -882,6 +920,8 @@
       const value = Scratch.Cast.toNumber(VALUE);
       const idx = g.labels.indexOf(label);
       if (idx >= 0) {
+        g.animStartVals[idx] = g.animated[idx] ?? g.values[idx];
+        g.animStartTimes[idx] = performance.now();
         g.values[idx] = value;
         scheduleRedraw();
       }
@@ -896,6 +936,8 @@
         g.labels.splice(idx, 1);
         g.values.splice(idx, 1);
         g.animated.splice(idx, 1);
+        g.animStartVals.splice(idx, 1);
+        g.animStartTimes.splice(idx, 1);
         scheduleRedraw();
       }
     }
@@ -906,6 +948,8 @@
       g.labels = [];
       g.values = [];
       g.animated = [];
+      g.animStartVals = [];
+      g.animStartTimes = [];
       scheduleRedraw();
     }
 
@@ -920,8 +964,9 @@
       const g = graphs.get(String(NAME));
       if (!g) return;
       const pos = stageToOverlay(Scratch.Cast.toNumber(X), Scratch.Cast.toNumber(Y));
-      g.x = pos.x;
-      g.y = pos.y;
+      // pos is the overlay pixel for the Scratch coordinate; place the graph centred there.
+      g.x = pos.x - g.width / 2;
+      g.y = pos.y - g.height / 2;
       scheduleRedraw();
     }
 
@@ -946,6 +991,12 @@
       if (!g) return;
       g.bgColor = String(COLOR);
       scheduleRedraw();
+    }
+
+    setAnimDuration({ NAME, MS }) {
+      const g = graphs.get(String(NAME));
+      if (!g) return;
+      g.animDuration = Math.max(0, Scratch.Cast.toNumber(MS));
     }
 
     getValueByLabel({ NAME, LABEL }) {
