@@ -56,8 +56,8 @@
    * @property {number[]} values
    * @property {number[]} animated   - current animated values (lerped toward `values`)
    * @property {boolean}  visible
-   * @property {number}   x            - centre X in overlay px
-   * @property {number}   y            - centre Y in overlay px
+   * @property {number}   centerX      - centre X in Scratch units
+   * @property {number}   centerY      - centre Y in Scratch units
    * @property {number}   width
    * @property {number}   height
    * @property {string}   title
@@ -109,8 +109,8 @@
     animStartTimes: [],
     animDuration: 500,
     visible: true,
-    x: 20,
-    y: 20,
+    centerX: 0,
+    centerY: 0,
     width: 240,
     height: 160,
     title: "",
@@ -189,20 +189,19 @@
     c.closePath();
   };
 
-  const drawBarChart = (c, g) => {
-    const { x, y, width: W, height: H, animated, labels, palette, textColor } =
-      g;
+  const drawBarChart = (c, g, x, y) => {
+    const { width: W, height: H, animated, labels, palette, textColor } = g;
 
     const PADDING_TOP = g.title ? 30 : 12;
     const PADDING_BOTTOM = 30;
     const PADDING_LEFT = 40;
     const PADDING_RIGHT = 12;
 
-    const chartW = W - PADDING_LEFT - PADDING_RIGHT;
-    const chartH = H - PADDING_TOP - PADDING_BOTTOM;
+    const chartW = Math.max(0, W - PADDING_LEFT - PADDING_RIGHT);
+    const chartH = Math.max(0, H - PADDING_TOP - PADDING_BOTTOM);
 
     const n = animated.length;
-    if (n === 0) return;
+    if (n === 0 || chartW === 0 || chartH === 0) return;
 
     const maxVal = Math.max(...animated, 0) || 1;
     const minVal = Math.min(...animated, 0);
@@ -259,20 +258,19 @@
     }
   };
 
-  const drawLineChart = (c, g) => {
-    const { x, y, width: W, height: H, animated, labels, palette, textColor } =
-      g;
+  const drawLineChart = (c, g, x, y) => {
+    const { width: W, height: H, animated, labels, palette, textColor } = g;
 
     const PADDING_TOP = g.title ? 30 : 12;
     const PADDING_BOTTOM = 30;
     const PADDING_LEFT = 40;
     const PADDING_RIGHT = 12;
 
-    const chartW = W - PADDING_LEFT - PADDING_RIGHT;
-    const chartH = H - PADDING_TOP - PADDING_BOTTOM;
+    const chartW = Math.max(0, W - PADDING_LEFT - PADDING_RIGHT);
+    const chartH = Math.max(0, H - PADDING_TOP - PADDING_BOTTOM);
 
     const n = animated.length;
-    if (n === 0) return;
+    if (n === 0 || chartW === 0 || chartH === 0) return;
 
     const maxVal = Math.max(...animated, 0) || 1;
     const minVal = Math.min(...animated, 0);
@@ -359,13 +357,15 @@
     }
   };
 
-  const drawPieChart = (c, g) => {
-    const { x, y, width: W, height: H, animated, labels, palette } = g;
+  const drawPieChart = (c, g, x, y) => {
+    const { width: W, height: H, animated, labels, palette } = g;
 
     const PADDING = g.title ? 36 : 16;
     const legendH = 16 * Math.ceil(animated.length / 2);
     const availH = H - PADDING - legendH - 8;
-    const radius = Math.min(W - PADDING * 2, availH) / 2;
+    const radius = Math.max(0, Math.min(W - PADDING * 2, availH) / 2);
+
+    if (radius === 0) return;
 
     const cx = x + W / 2;
     const cy = y + PADDING + radius;
@@ -424,7 +424,12 @@
 
   /** Draw one graph onto the overlay canvas. */
   const drawGraph = (c, g) => {
-    const { x, y, width: W, height: H, bgColor, textColor, title, type } = g;
+    const { centerX, centerY, width: W, height: H, bgColor, textColor, title, type } = g;
+
+    // Convert center from Scratch units to overlay pixels
+    const centerPos = stageToOverlay(centerX, centerY);
+    const x = centerPos.x - W / 2;
+    const y = centerPos.y - H / 2;
 
     // Background card
     if (g.shadow) {
@@ -459,9 +464,9 @@
     }
 
     if (g.animated.length > 0) {
-      if (type === "bar") drawBarChart(c, g);
-      else if (type === "line") drawLineChart(c, g);
-      else if (type === "pie") drawPieChart(c, g);
+      if (type === "bar") drawBarChart(c, g, x, y);
+      else if (type === "line") drawLineChart(c, g, x, y);
+      else if (type === "pie") drawPieChart(c, g, x, y);
     } else {
       // Empty state
       c.fillStyle = "rgba(0,0,0,0.25)";
@@ -1005,10 +1010,9 @@
     setPosition({ NAME, X, Y }) {
       const g = graphs.get(String(NAME));
       if (!g) return;
-      const pos = stageToOverlay(Scratch.Cast.toNumber(X), Scratch.Cast.toNumber(Y));
-      // pos is the overlay pixel for the Scratch coordinate; place the graph centred there.
-      g.x = pos.x - g.width / 2;
-      g.y = pos.y - g.height / 2;
+      // Store the center position in Scratch units
+      g.centerX = Scratch.Cast.toNumber(X);
+      g.centerY = Scratch.Cast.toNumber(Y);
       scheduleRedraw();
     }
 
