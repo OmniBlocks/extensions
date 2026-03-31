@@ -1,7 +1,7 @@
 // Name: Graphs
 // ID: omniGraphs
 // Description: Create and display bar, line, and pie charts in your project.
-// By: OmniBlocks
+// By: OmniBlocks (AI-generated, reviewed by humans)
 // License: MIT
 
 ((Scratch) => {
@@ -72,17 +72,18 @@
     };
   };
 
+  // Default palette using OmniBlocks' GUI colors (from scratch-gui).
   const DEFAULT_PALETTE = [
-    "#4e79a7",
-    "#f28e2b",
-    "#e15759",
-    "#76b7b2",
-    "#59a14f",
-    "#edc948",
-    "#b07aa1",
-    "#ff9da7",
-    "#9c755f",
-    "#bab0ac",
+    "hsla(180, 85%, 65%, 1)",   // extensions-primary
+    "hsla(180, 85%, 40%, 1)",   // extensions-tertiary
+    "#59C0C0",                   // motion-primary
+    "#389499",                   // motion-tertiary
+    "hsla(180, 42%, 51%, 1)",   // looks-secondary-dark
+    "hsla(180, 57%, 85%, 1)",   // extensions-light
+    "#66BBCC",                   // drop-highlight
+    "hsla(180, 85%, 65%, 0.7)", // extensions-primary (muted)
+    "hsla(180, 85%, 40%, 0.7)", // extensions-tertiary (muted)
+    "#59C0C0",                   // motion-primary (repeat for overflow)
   ];
 
   /** Create a fresh GraphData object. */
@@ -291,11 +292,11 @@
       c.lineTo(x + PADDING_LEFT + chartW, y + PADDING_TOP + chartH);
       c.lineTo(x + PADDING_LEFT, y + PADDING_TOP + chartH);
       c.closePath();
-      c.fillStyle =
-        palette[0].startsWith("#")
-          ? palette[0] + "33"
-          : "rgba(78,121,167,0.2)";
+      // Use the line colour at reduced opacity for the fill area
+      c.globalAlpha = 0.2;
+      c.fillStyle = palette[0];
       c.fill();
+      c.globalAlpha = 1;
     }
 
     // Line
