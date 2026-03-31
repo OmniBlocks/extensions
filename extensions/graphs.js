@@ -513,6 +513,9 @@
 
   // ── Extension class ───────────────────────────────────────────────────────
 
+  const MENU_ICON =
+    "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MCA0MCI+DQogIDwhLS0gWSBheGlzIC0tPg0KICA8bGluZSB4MT0iNSIgeTE9IjMiIHgyPSI1IiB5Mj0iMzUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPg0KICA8IS0tIFggYXhpcyAtLT4NCiAgPGxpbmUgeDE9IjQiIHkxPSIzNSIgeDI9IjM3IiB5Mj0iMzUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPg0KICA8IS0tIEJhcnMgKHNob3J0LCB0YWxsLCBtZWRpdW0pIC0tPg0KICA8cmVjdCB4PSI4IiAgeT0iMjQiIHdpZHRoPSI3IiBoZWlnaHQ9IjExIiByeD0iMS41IiBmaWxsPSIjZmZmIiBvcGFjaXR5PSIwLjk1Ii8+DQogIDxyZWN0IHg9IjE4IiB5PSIxMyIgd2lkdGg9IjciIGhlaWdodD0iMjIiIHJ4PSIxLjUiIGZpbGw9IiNmZmYiIG9wYWNpdHk9IjAuOTUiLz4NCiAgPHJlY3QgeD0iMjgiIHk9IjE4IiB3aWR0aD0iNyIgaGVpZ2h0PSIxNyIgcng9IjEuNSIgZmlsbD0iI2ZmZiIgb3BhY2l0eT0iMC45NSIvPg0KPC9zdmc+";
+
   class GraphsExtension {
     getInfo() {
       return {
@@ -521,6 +524,7 @@
         color1: "#4e79a7",
         color2: "#3d6185",
         color3: "#2c4a63",
+        menuIconURI: MENU_ICON,
 
         blocks: [
           // ── Graph lifecycle ───────────────────────────────────────────
