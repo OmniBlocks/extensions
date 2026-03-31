@@ -1,8 +1,10 @@
 // Name: Graphs
 // ID: omniGraphs
-// Description: Create and display bar, line, and pie charts in your project.
-// By: OmniBlocks (AI-generated, reviewed by humans)
+// Description: Display bar, line, and pie charts.
+// By: supervoidcoder
 // License: MIT
+
+// Note: This extension was AI-generated and has been reviewed by humans.
 
 ((Scratch) => {
   "use strict";
@@ -18,14 +20,21 @@
   /** @type {HTMLCanvasElement} */
   const overlayCanvas = document.createElement("canvas");
   overlayCanvas.id = "omniGraphsOverlay";
-  overlayCanvas.style.cssText =
-    "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:9999;";
+  Object.assign(overlayCanvas.style, {
+    position: "absolute",
+    top: "0",
+    left: "0",
+    width: "100%",
+    height: "100%",
+    pointerEvents: "none",
+    zIndex: "9999",
+  });
 
-  const scratchCanvas = runtime.renderer.canvas;
-  scratchCanvas.parentElement.style.position = "relative";
-  scratchCanvas.parentElement.appendChild(overlayCanvas);
+  runtime.renderer.overlayContainer.appendChild(overlayCanvas);
 
   const ctx = overlayCanvas.getContext("2d");
+
+  const scratchCanvas = runtime.renderer.canvas;
 
   // Keep the overlay canvas pixel-perfect when the stage is resized.
   const resizeObserver = new ResizeObserver(() => {
@@ -55,6 +64,7 @@
    * @property {string[]} palette      - colours for data series
    * @property {string}   bgColor
    * @property {string}   textColor
+   * @property {boolean}  shadow       - whether to draw a drop shadow
    * @property {number}   animDuration - animation duration in ms
    * @property {number[]} animStartVals  - animated value at the start of each point's animation
    * @property {number[]} animStartTimes - DOMHighResTimeStamp when each point's animation began
@@ -107,6 +117,7 @@
     palette: [...DEFAULT_PALETTE],
     bgColor: "rgba(255,255,255,0.92)",
     textColor: "#333333",
+    shadow: false,
   });
 
   // ── Animation loop ────────────────────────────────────────────────────────
@@ -416,9 +427,11 @@
     const { x, y, width: W, height: H, bgColor, textColor, title, type } = g;
 
     // Background card
-    c.shadowColor = "rgba(0,0,0,0.18)";
-    c.shadowBlur = 8;
-    c.shadowOffsetY = 2;
+    if (g.shadow) {
+      c.shadowColor = "rgba(0,0,0,0.18)";
+      c.shadowBlur = 8;
+      c.shadowOffsetY = 2;
+    }
     roundRect(c, x, y, W, H, 8);
     c.fillStyle = bgColor;
     c.fill();
@@ -767,6 +780,24 @@
               },
             },
           },
+          {
+            opcode: "setShadow",
+            blockType: Scratch.BlockType.COMMAND,
+            text: Scratch.translate(
+              "set shadow of graph [NAME] to [ENABLED]"
+            ),
+            arguments: {
+              NAME: {
+                type: Scratch.ArgumentType.STRING,
+                defaultValue: "myGraph",
+              },
+              ENABLED: {
+                type: Scratch.ArgumentType.STRING,
+                defaultValue: "on",
+                menu: "onOff",
+              },
+            },
+          },
           "---",
           // ── Reporters ─────────────────────────────────────────────────
           {
@@ -835,6 +866,13 @@
                 text: Scratch.translate("pie"),
                 value: "pie",
               },
+            ],
+          },
+          onOff: {
+            acceptReporters: true,
+            items: [
+              { text: Scratch.translate("on"), value: "on" },
+              { text: Scratch.translate("off"), value: "off" },
             ],
           },
         },
@@ -997,6 +1035,13 @@
       const g = graphs.get(String(NAME));
       if (!g) return;
       g.animDuration = Math.max(0, Scratch.Cast.toNumber(MS));
+    }
+
+    setShadow({ NAME, ENABLED }) {
+      const g = graphs.get(String(NAME));
+      if (!g) return;
+      g.shadow = String(ENABLED) !== "off";
+      scheduleRedraw();
     }
 
     getValueByLabel({ NAME, LABEL }) {
