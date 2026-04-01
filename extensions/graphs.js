@@ -27,7 +27,6 @@
     width: "100%",
     height: "100%",
     pointerEvents: "none",
-    zIndex: "9999",
   });
 
   runtime.renderer.overlayContainer.appendChild(overlayCanvas);
@@ -36,11 +35,12 @@
 
   const scratchCanvas = runtime.renderer.canvas;
 
-  // Keep the overlay canvas pixel-perfect when the stage is resized.
+  // Resize the overlay canvas to match the stage, accounting for device pixel ratio.
   const resizeObserver = new ResizeObserver(() => {
     const rect = scratchCanvas.getBoundingClientRect();
-    overlayCanvas.width = rect.width;
-    overlayCanvas.height = rect.height;
+    const dpr = window.devicePixelRatio || 1;
+    overlayCanvas.width = rect.width * dpr;
+    overlayCanvas.height = rect.height * dpr;
     redrawAll();
   });
   resizeObserver.observe(scratchCanvas);
