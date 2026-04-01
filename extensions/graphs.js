@@ -27,6 +27,7 @@
     width: "100%",
     height: "100%",
     pointerEvents: "none",
+    zIndex: "1",
   });
 
   runtime.renderer.overlayContainer.appendChild(overlayCanvas);
@@ -35,12 +36,20 @@
 
   const scratchCanvas = runtime.renderer.canvas;
 
-  // Resize the overlay canvas to match the stage, accounting for device pixel ratio.
+  // Logical (CSS-pixel) dimensions used for all coordinate maths.
+  let overlayLogicalW = 0;
+  let overlayLogicalH = 0;
+
+  // Keep the overlay canvas pixel-perfect when the stage is resized.
   const resizeObserver = new ResizeObserver(() => {
     const rect = scratchCanvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
+    overlayLogicalW = rect.width;
+    overlayLogicalH = rect.height;
+    // Physical canvas size = logical × DPR for crisp rendering on HiDPI displays.
     overlayCanvas.width = rect.width * dpr;
     overlayCanvas.height = rect.height * dpr;
+    ctx.scale(dpr, dpr);
     redrawAll();
   });
   resizeObserver.observe(scratchCanvas);
@@ -72,8 +81,8 @@
 
   /** Return coordinates scaled from Scratch stage units to overlay pixels. */
   const stageToOverlay = (sx, sy) => {
-    const oW = overlayCanvas.width || scratchCanvas.clientWidth;
-    const oH = overlayCanvas.height || scratchCanvas.clientHeight;
+    const oW = overlayLogicalW || scratchCanvas.clientWidth;
+    const oH = overlayLogicalH || scratchCanvas.clientHeight;
     const sw = runtime.stageWidth || 480;
     const sh = runtime.stageHeight || 360;
     const scaleX = oW / sw;
@@ -433,8 +442,8 @@
     const { centerX, centerY, width: W, height: H, bgColor, textColor, title, type } = g;
 
     // Scale graph dimensions with the stage, just like positions
-    const oW = overlayCanvas.width || scratchCanvas.clientWidth;
-    const oH = overlayCanvas.height || scratchCanvas.clientHeight;
+    const oW = overlayLogicalW || scratchCanvas.clientWidth;
+    const oH = overlayLogicalH || scratchCanvas.clientHeight;
     const sw = runtime.stageWidth || 480;
     const sh = runtime.stageHeight || 360;
     const sW = W * (oW / sw);
@@ -498,10 +507,9 @@
   };
 
   const redrawAll = () => {
-    const W = overlayCanvas.width;
-    const H = overlayCanvas.height;
-    if (!W || !H) return;
-    ctx.clearRect(0, 0, W, H);
+    if (!overlayLogicalW || !overlayLogicalH) return;
+    // clearRect uses logical coords because ctx is scaled by DPR in the ResizeObserver.
+    ctx.clearRect(0, 0, overlayLogicalW, overlayLogicalH);
     for (const g of graphs.values()) {
       if (g.visible) drawGraph(ctx, g);
     }
