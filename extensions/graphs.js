@@ -195,8 +195,8 @@
     c.closePath();
   };
 
-  const drawBarChart = (c, g, x, y) => {
-    const { width: W, height: H, animated, labels, palette, textColor } = g;
+  const drawBarChart = (c, g, x, y, W, H) => {
+    const { animated, labels, palette, textColor } = g;
 
     const PADDING_TOP = g.title ? 30 : 12;
     const PADDING_BOTTOM = 30;
@@ -264,8 +264,8 @@
     }
   };
 
-  const drawLineChart = (c, g, x, y) => {
-    const { width: W, height: H, animated, labels, palette, textColor } = g;
+  const drawLineChart = (c, g, x, y, W, H) => {
+    const { animated, labels, palette, textColor } = g;
 
     const PADDING_TOP = g.title ? 30 : 12;
     const PADDING_BOTTOM = 30;
@@ -363,8 +363,8 @@
     }
   };
 
-  const drawPieChart = (c, g, x, y) => {
-    const { width: W, height: H, animated, labels, palette } = g;
+  const drawPieChart = (c, g, x, y, W, H) => {
+    const { animated, labels, palette } = g;
 
     const PADDING = g.title ? 36 : 16;
     const legendH = 16 * Math.ceil(animated.length / 2);
@@ -432,10 +432,18 @@
   const drawGraph = (c, g) => {
     const { centerX, centerY, width: W, height: H, bgColor, textColor, title, type } = g;
 
+    // Scale graph dimensions with the stage, just like positions
+    const oW = overlayCanvas.width || scratchCanvas.clientWidth;
+    const oH = overlayCanvas.height || scratchCanvas.clientHeight;
+    const sw = runtime.stageWidth || 480;
+    const sh = runtime.stageHeight || 360;
+    const sW = W * (oW / sw);
+    const sH = H * (oH / sh);
+
     // Convert center from Scratch units to overlay pixels
     const centerPos = stageToOverlay(centerX, centerY);
-    const x = centerPos.x - W / 2;
-    const y = centerPos.y - H / 2;
+    const x = centerPos.x - sW / 2;
+    const y = centerPos.y - sH / 2;
 
     // Background card
     if (g.shadow) {
@@ -443,7 +451,7 @@
       c.shadowBlur = 8;
       c.shadowOffsetY = 2;
     }
-    roundRect(c, x, y, W, H, 8);
+    roundRect(c, x, y, sW, sH, 8);
     c.fillStyle = bgColor;
     c.fill();
     c.shadowColor = "transparent";
@@ -457,32 +465,32 @@
 
     // Clip to card
     c.save();
-    roundRect(c, x + 1, y + 1, W - 2, H - 2, 7);
+    roundRect(c, x + 1, y + 1, sW - 2, sH - 2, 7);
     c.clip();
 
     // Title
     if (title) {
       c.fillStyle = textColor;
-      c.font = `bold ${Math.max(10, Math.min(14, W * 0.055))}px sans-serif`;
+      c.font = `bold ${Math.max(10, Math.min(14, sW * 0.055))}px sans-serif`;
       c.textAlign = "center";
       c.textBaseline = "top";
-      c.fillText(title.length > 30 ? title.slice(0, 29) + "…" : title, x + W / 2, y + 8);
+      c.fillText(title.length > 30 ? title.slice(0, 29) + "…" : title, x + sW / 2, y + 8);
     }
 
     if (g.animated.length > 0) {
-      if (type === "bar") drawBarChart(c, g, x, y);
-      else if (type === "line") drawLineChart(c, g, x, y);
-      else if (type === "pie") drawPieChart(c, g, x, y);
+      if (type === "bar") drawBarChart(c, g, x, y, sW, sH);
+      else if (type === "line") drawLineChart(c, g, x, y, sW, sH);
+      else if (type === "pie") drawPieChart(c, g, x, y, sW, sH);
     } else {
       // Empty state
       c.fillStyle = "rgba(0,0,0,0.25)";
-      c.font = `${Math.max(10, Math.min(13, W * 0.05))}px sans-serif`;
+      c.font = `${Math.max(10, Math.min(13, sW * 0.05))}px sans-serif`;
       c.textAlign = "center";
       c.textBaseline = "middle";
       c.fillText(
         Scratch.translate("No data"),
-        x + W / 2,
-        y + H / 2
+        x + sW / 2,
+        y + sH / 2
       );
     }
 
