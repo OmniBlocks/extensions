@@ -128,7 +128,13 @@
   const easeInOutCubic = (t) =>
     t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
+  /** Start the RAF loop only if it is not already running. */
+  const startRAF = () => {
+    if (!rafId) rafId = requestAnimationFrame(animationStep);
+  };
+
   const animationStep = (timestamp) => {
+    rafId = null; // allow startRAF to reschedule if still needed
     let stillAnimating = false;
     for (const g of graphs.values()) {
       if (!g.visible) continue;
@@ -150,18 +156,18 @@
       needsRedraw = false;
     }
 
-    rafId = requestAnimationFrame(animationStep);
+    // Keep looping only while animations are in progress; idle frames stop here.
+    if (stillAnimating) startRAF();
   };
-
-  rafId = requestAnimationFrame(animationStep);
 
   // Make sure the loop restarts after project reload.
   runtime.on("PROJECT_STOP_ALL", () => {
-    if (!rafId) rafId = requestAnimationFrame(animationStep);
+    scheduleRedraw();
   });
 
   const scheduleRedraw = () => {
     needsRedraw = true;
+    startRAF();
   };
 
   // ── Rendering helpers ─────────────────────────────────────────────────────
@@ -530,6 +536,7 @@
         color2: "#3d6185",
         color3: "#2c4a63",
         menuIconURI: MENU_ICON,
+        blockIconURI: MENU_ICON,
 
         blocks: [
           // ── Graph lifecycle ───────────────────────────────────────────
@@ -1043,6 +1050,7 @@
       const g = graphs.get(String(NAME));
       if (!g) return;
       g.animDuration = Math.max(0, Scratch.Cast.toNumber(MS));
+      scheduleRedraw();
     }
 
     setShadow({ NAME, ENABLED }) {
