@@ -16,15 +16,90 @@
   const vm = Scratch.vm;
   const runtime = vm.runtime;
 
-  // ── Pen skin (renders onto the main stage canvas) ─────────────────────────
-  // Using the pen layer means charts are composited into the WebGL scene, so
-  // MediaRecorder captures them and they don't float over editor UI.
+  // ── Custom skin (renders onto the main stage canvas) ─────────────────────
+  // TurboWarp's PenSkin uses a WebGL framebuffer — it has no backing _canvas.
+  // We create our own skin class (same pattern as Xeltalliv/simple3D.js) that
+  // owns a 2D canvas and uploads it as a WebGL texture each frame.
+  // Charts are composited into the WebGL scene so MediaRecorder captures them
+  // and they can't float over editor modals/menus.
   const renderer = runtime.renderer;
-  const penSkinId = renderer.createPenSkin();
-  const penDrawableId = renderer.createDrawable("pen");
-  renderer.updateDrawableSkinId(penDrawableId, penSkinId);
-  /** @type {{_canvas: HTMLCanvasElement, _canvasDirty: boolean}} */
-  const penSkin = renderer._allSkins[penSkinId];
+
+  /** 2D canvas we draw charts onto. */
+  const graphsCanvas = document.createElement("canvas");
+  {
+    const [w, h] = renderer.getNativeSize();
+    graphsCanvas.width = w;
+    graphsCanvas.height = h;
+  }
+  let graphsCanvasDirty = false;
+
+  class GraphsSkin extends renderer.exports.Skin {
+    constructor(id, rndr) {
+      super(id, rndr);
+      const gl = rndr.gl;
+      const tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      this._texture = tex;
+      this._nativeSize = rndr.getNativeSize();
+      this._rotationCenter = [this._nativeSize[0] / 2, this._nativeSize[1] / 2];
+      this._onResize = this._onNativeSizeChanged.bind(this);
+      rndr.on("NativeSizeChanged", this._onResize);
+    }
+    dispose() {
+      this._renderer.removeListener("NativeSizeChanged", this._onResize);
+      if (this._texture) {
+        const gl = this._renderer.gl;
+        if (gl) gl.deleteTexture(this._texture);
+        this._texture = null;
+      }
+      super.dispose();
+    }
+    get size() { return this._nativeSize; }
+    getTexture() { return this._texture || super.getTexture(); }
+    /** Upload the 2D canvas to the GPU texture. */
+    updateContent() {
+      const gl = this._renderer.gl;
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+      gl.bindTexture(gl.TEXTURE_2D, this._texture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, graphsCanvas);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+      if (this._silhouette) this._silhouette.update(graphsCanvas);
+      this.emitWasAltered();
+    }
+    _onNativeSizeChanged(event) {
+      this._nativeSize = event.newSize;
+      this._rotationCenter = [this._nativeSize[0] / 2, this._nativeSize[1] / 2];
+      graphsCanvas.width = this._nativeSize[0];
+      graphsCanvas.height = this._nativeSize[1];
+      scheduleRedraw();
+    }
+  }
+
+  const graphsSkinId = renderer._nextSkinId++;
+  const graphsSkin = new GraphsSkin(graphsSkinId, renderer);
+  renderer._allSkins[graphsSkinId] = graphsSkin;
+
+  const graphsDrawableId = renderer.createDrawable("pen");
+  renderer.updateDrawableSkinId(graphsDrawableId, graphsSkinId);
+  if (renderer.markDrawableAsNoninteractive) {
+    renderer.markDrawableAsNoninteractive(graphsDrawableId);
+  }
+
+  // Patch renderer.draw to flush the 2D canvas to the GPU before each frame.
+  // Scratch extensions cannot be unloaded at runtime (they persist for the page
+  // lifetime), so the permanent patch here is intentional and acceptable.
+  const _origDraw = renderer.draw.bind(renderer);
+  renderer.draw = function () {
+    if (graphsCanvasDirty) {
+      graphsSkin.updateContent();
+      graphsCanvasDirty = false;
+    }
+    _origDraw();
+  };
 
   // ── Graph store ───────────────────────────────────────────────────────────
   /** @type {Map<string, GraphData>} */
@@ -51,14 +126,12 @@
    * @property {number[]} animStartTimes - DOMHighResTimeStamp when each point's animation began
    */
 
-  /** Return coordinates scaled from Scratch stage units to pen canvas pixels. */
+  /** Return coordinates scaled from Scratch stage units to graphsCanvas pixels. */
   const stageToCanvas = (sx, sy) => {
-    const penCanvas = penSkin._canvas;
-    if (!penCanvas) return { x: 0, y: 0 };
     const sw = runtime.stageWidth || 480;
     const sh = runtime.stageHeight || 360;
-    const scaleX = penCanvas.width / sw;
-    const scaleY = penCanvas.height / sh;
+    const scaleX = graphsCanvas.width / sw;
+    const scaleY = graphsCanvas.height / sh;
     // Scratch origin is centre; canvas origin is top-left
     return {
       x: (sx + sw / 2) * scaleX,
@@ -409,19 +482,17 @@
     }
   };
 
-  /** Draw one graph onto the pen canvas. */
+  /** Draw one graph onto graphsCanvas. */
   const drawGraph = (c, g) => {
     const { centerX, centerY, width: W, height: H, bgColor, textColor, title, type } = g;
 
     // Scale graph dimensions with the stage, just like positions
-    const penCanvas = penSkin._canvas;
-    if (!penCanvas) return;
     const sw = runtime.stageWidth || 480;
     const sh = runtime.stageHeight || 360;
-    const sW = W * (penCanvas.width / sw);
-    const sH = H * (penCanvas.height / sh);
+    const sW = W * (graphsCanvas.width / sw);
+    const sH = H * (graphsCanvas.height / sh);
 
-    // Convert center from Scratch units to pen canvas pixels
+    // Convert center from Scratch units to canvas pixels
     const centerPos = stageToCanvas(centerX, centerY);
     const x = centerPos.x - sW / 2;
     const y = centerPos.y - sH / 2;
@@ -479,19 +550,16 @@
   };
 
   const redrawAll = () => {
-    const penCanvas = penSkin._canvas;
-    if (!penCanvas) return;
-    const W = penCanvas.width;
-    const H = penCanvas.height;
+    const W = graphsCanvas.width;
+    const H = graphsCanvas.height;
     if (!W || !H) return;
-    const c = penCanvas.getContext("2d");
+    const c = graphsCanvas.getContext("2d");
     c.clearRect(0, 0, W, H);
     for (const g of graphs.values()) {
       if (g.visible) drawGraph(c, g);
     }
-    // Notify the renderer to re-upload the pen canvas to its GPU texture.
-    penSkin._canvasDirty = true;
-    renderer.dirty = true;
+    // Mark the canvas dirty so the draw hook uploads it to the GPU texture.
+    graphsCanvasDirty = true;
   };
 
   // ── Utility: parse JSON arrays from block arguments ───────────────────────
