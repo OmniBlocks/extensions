@@ -26,11 +26,13 @@
 
   /** 2D canvas we draw charts onto. */
   const graphsCanvas = document.createElement("canvas");
-  {
-    const [w, h] = renderer.getNativeSize();
-    graphsCanvas.width = w;
-    graphsCanvas.height = h;
-  }
+  /** Sync graphsCanvas to the actual GL canvas pixel dimensions. */
+  const syncCanvasSize = () => {
+    const glCanvas = renderer._gl.canvas;
+    graphsCanvas.width = glCanvas.width;
+    graphsCanvas.height = glCanvas.height;
+  };
+  syncCanvasSize();
   let graphsCanvasDirty = false;
 
   class GraphsSkin extends renderer.exports.Skin {
@@ -46,11 +48,14 @@
       this._texture = tex;
       this._nativeSize = rndr.getNativeSize();
       this._rotationCenter = [this._nativeSize[0] / 2, this._nativeSize[1] / 2];
-      this._onResize = this._onNativeSizeChanged.bind(this);
-      rndr.on("NativeSizeChanged", this._onResize);
+      this._onNativeResize = this._handleNativeSizeChanged.bind(this);
+      this._onQualityChange = this._handleQualityChanged.bind(this);
+      rndr.on("NativeSizeChanged", this._onNativeResize);
+      rndr.on("UseHighQualityRenderChanged", this._onQualityChange);
     }
     dispose() {
-      this._renderer.removeListener("NativeSizeChanged", this._onResize);
+      this._renderer.removeListener("NativeSizeChanged", this._onNativeResize);
+      this._renderer.removeListener("UseHighQualityRenderChanged", this._onQualityChange);
       if (this._texture) {
         const gl = this._renderer.gl;
         if (gl) gl.deleteTexture(this._texture);
@@ -70,11 +75,14 @@
       if (this._silhouette) this._silhouette.update(graphsCanvas);
       this.emitWasAltered();
     }
-    _onNativeSizeChanged(event) {
+    _handleNativeSizeChanged(event) {
       this._nativeSize = event.newSize;
       this._rotationCenter = [this._nativeSize[0] / 2, this._nativeSize[1] / 2];
-      graphsCanvas.width = this._nativeSize[0];
-      graphsCanvas.height = this._nativeSize[1];
+      syncCanvasSize();
+      scheduleRedraw();
+    }
+    _handleQualityChanged() {
+      syncCanvasSize();
       scheduleRedraw();
     }
   }
