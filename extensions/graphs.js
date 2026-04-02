@@ -24,9 +24,27 @@
   // and they can't float over editor modals/menus.
   const renderer = runtime.renderer;
 
+  // Guard against environments where the required renderer internals are absent
+  // (e.g., a hypothetical future packager that strips private APIs). Failing
+  // early with a clear message is better than a cryptic TypeError later.
+  if (
+    !renderer ||
+    !renderer._gl ||
+    !renderer.exports ||
+    !renderer.exports.Skin
+  ) {
+    throw new Error(
+      "Graphs extension requires a TurboWarp/OmniBlocks renderer with WebGL and Skin exports."
+    );
+  }
+
   /** 2D canvas we draw charts onto. */
   const graphsCanvas = document.createElement("canvas");
-  /** Sync graphsCanvas to the actual GL canvas pixel dimensions. */
+  /**
+   * Sync graphsCanvas to the actual GL canvas pixel dimensions.
+   * Called by the ResizeObserver so we always read the *current* pixel size,
+   * not a size that may be stale at the moment NativeSizeChanged fires.
+   */
   const syncCanvasSize = () => {
     const glCanvas = renderer._gl.canvas;
     graphsCanvas.width = glCanvas.width;
@@ -49,13 +67,48 @@
       this._nativeSize = rndr.getNativeSize();
       this._rotationCenter = [this._nativeSize[0] / 2, this._nativeSize[1] / 2];
       this._onNativeResize = this._handleNativeSizeChanged.bind(this);
-      this._onQualityChange = this._handleQualityChanged.bind(this);
       rndr.on("NativeSizeChanged", this._onNativeResize);
-      rndr.on("UseHighQualityRenderChanged", this._onQualityChange);
+
+      // Watch the GL canvas for any pixel-dimension change — this covers both
+      // stage-dimension changes (NativeSizeChanged may fire before the GL canvas
+      // has actually been resized, creating a timing race) and HQ-render toggles
+      // (canvas.width/height change without a CSS layout change).
+      //
+      // "device-pixel-content-box" reports dimensions in device pixels so it
+      // fires even when only canvas.width/height change while the CSS size stays
+      // fixed (HQ mode). It is supported in Chrome 84+ / Firefox 93+, which
+      // covers all realistic TurboWarp/OmniBlocks deployment targets.
+      // If the browser is too old to support that box type, fall back to
+      // observing the CSS content-box (catches stage resize at minimum) while
+      // keeping the UseHighQualityRenderChanged event for HQ toggles.
+      this._glCanvasObserver = new ResizeObserver(() => {
+        syncCanvasSize();
+        scheduleRedraw();
+      });
+      this._onQualityChange = () => {
+        syncCanvasSize();
+        scheduleRedraw();
+      };
+      try {
+        this._glCanvasObserver.observe(gl.canvas, {
+          box: "device-pixel-content-box",
+        });
+      } catch (_) {
+        // Older browser: fall back to CSS-box observation + explicit quality event
+        this._glCanvasObserver.observe(gl.canvas);
+        rndr.on("UseHighQualityRenderChanged", this._onQualityChange);
+        this._usingQualityFallback = true;
+      }
     }
     dispose() {
       this._renderer.removeListener("NativeSizeChanged", this._onNativeResize);
-      this._renderer.removeListener("UseHighQualityRenderChanged", this._onQualityChange);
+      if (this._usingQualityFallback) {
+        this._renderer.removeListener(
+          "UseHighQualityRenderChanged",
+          this._onQualityChange
+        );
+      }
+      this._glCanvasObserver.disconnect();
       if (this._texture) {
         const gl = this._renderer.gl;
         if (gl) gl.deleteTexture(this._texture);
@@ -76,13 +129,12 @@
       this.emitWasAltered();
     }
     _handleNativeSizeChanged(event) {
+      // Update the logical stage size (used for coordinate mapping and skin
+      // coverage). The physical canvas resize is handled by the ResizeObserver
+      // so there is no ordering dependency between this event and the GL
+      // canvas actually changing its pixel dimensions.
       this._nativeSize = event.newSize;
       this._rotationCenter = [this._nativeSize[0] / 2, this._nativeSize[1] / 2];
-      syncCanvasSize();
-      scheduleRedraw();
-    }
-    _handleQualityChanged() {
-      syncCanvasSize();
       scheduleRedraw();
     }
   }
