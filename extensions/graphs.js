@@ -4,8 +4,6 @@
 // By: supervoidcoder
 // License: MIT
 
-// Note: This extension was AI-generated and has been reviewed by humans.
-
 ((Scratch) => {
   "use strict";
 
@@ -16,17 +14,12 @@
   const vm = Scratch.vm;
   const runtime = vm.runtime;
 
-  // ── Custom skin (renders onto the main stage canvas) ─────────────────────
-  // TurboWarp's PenSkin uses a WebGL framebuffer — it has no backing _canvas.
-  // We create our own skin class (same pattern as Xeltalliv/simple3D.js) that
-  // owns a 2D canvas and uploads it as a WebGL texture each frame.
-  // Charts are composited into the WebGL scene so MediaRecorder captures them
-  // and they can't float over editor modals/menus.
+  // Custom skin — owns a 2D canvas and uploads it as a WebGL texture each
+  // frame, same pattern as Xeltalliv/simple3D.js. Charts are composited into
+  // the WebGL scene so MediaRecorder captures them.
   const renderer = runtime.renderer;
 
-  /** 2D canvas we draw charts onto. */
   const graphsCanvas = document.createElement("canvas");
-  /** Sync graphsCanvas to the actual GL canvas pixel dimensions. */
   const syncCanvasSize = () => {
     const glCanvas = renderer._gl.canvas;
     graphsCanvas.width = glCanvas.width;
@@ -65,7 +58,6 @@
     }
     get size() { return this._nativeSize; }
     getTexture() { return this._texture || super.getTexture(); }
-    /** Upload the 2D canvas to the GPU texture. */
     updateContent() {
       const gl = this._renderer.gl;
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
@@ -98,8 +90,6 @@
   }
 
   // Patch renderer.draw to flush the 2D canvas to the GPU before each frame.
-  // Scratch extensions cannot be unloaded at runtime (they persist for the page
-  // lifetime), so the permanent patch here is intentional and acceptable.
   const _origDraw = renderer.draw.bind(renderer);
   renderer.draw = function () {
     if (graphsCanvasDirty) {
@@ -109,32 +99,8 @@
     _origDraw();
   };
 
-  // ── Graph store ───────────────────────────────────────────────────────────
-  /** @type {Map<string, GraphData>} */
   const graphs = new Map();
 
-  /**
-   * @typedef {Object} GraphData
-   * @property {string}   type       - "bar" | "line" | "pie"
-   * @property {string[]} labels
-   * @property {number[]} values
-   * @property {number[]} animated   - current animated values (lerped toward `values`)
-   * @property {boolean}  visible
-   * @property {number}   centerX      - centre X in Scratch units
-   * @property {number}   centerY      - centre Y in Scratch units
-   * @property {number}   width
-   * @property {number}   height
-   * @property {string}   title
-   * @property {string[]} palette      - colours for data series
-   * @property {string}   bgColor
-   * @property {string}   textColor
-   * @property {boolean}  shadow       - whether to draw a drop shadow
-   * @property {number}   animDuration - animation duration in ms
-   * @property {number[]} animStartVals  - animated value at the start of each point's animation
-   * @property {number[]} animStartTimes - DOMHighResTimeStamp when each point's animation began
-   */
-
-  /** Return coordinates scaled from Scratch stage units to graphsCanvas pixels. */
   const stageToCanvas = (sx, sy) => {
     const sw = runtime.stageWidth || 480;
     const sh = runtime.stageHeight || 360;
@@ -147,7 +113,6 @@
     };
   };
 
-  // Default palette using OmniBlocks' GUI colors (from scratch-gui).
   const DEFAULT_PALETTE = [
     "hsla(180, 85%, 65%, 1)",   // extensions-primary
     "hsla(180, 85%, 40%, 1)",   // extensions-tertiary
@@ -161,7 +126,6 @@
     "#59C0C0",                   // motion-primary (repeat for overflow)
   ];
 
-  /** Create a fresh GraphData object. */
   const makeGraph = (type) => ({
     type,
     labels: [],
@@ -182,21 +146,18 @@
     shadow: false,
   });
 
-  // ── Animation loop ────────────────────────────────────────────────────────
   let rafId = null;
   let needsRedraw = false;
 
-  /** Smooth ease-in-out cubic: slow start, fast middle, slow end. */
   const easeInOutCubic = (t) =>
     t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
-  /** Start the RAF loop only if it is not already running. */
   const startRAF = () => {
     if (!rafId) rafId = requestAnimationFrame(animationStep);
   };
 
   const animationStep = (timestamp) => {
-    rafId = null; // allow startRAF to reschedule if still needed
+    rafId = null;
     let stillAnimating = false;
     for (const g of graphs.values()) {
       if (!g.visible) continue;
@@ -218,11 +179,9 @@
       needsRedraw = false;
     }
 
-    // Keep looping only while animations are in progress; idle frames stop here.
     if (stillAnimating) startRAF();
   };
 
-  // Make sure the loop restarts after project reload.
   runtime.on("PROJECT_STOP_ALL", () => {
     scheduleRedraw();
   });
@@ -232,13 +191,6 @@
     startRAF();
   };
 
-  // ── Rendering helpers ─────────────────────────────────────────────────────
-
-  /**
-   * Draw a rounded rectangle path.
-   * @param {CanvasRenderingContext2D} c
-   */
-  /** Truncate a label string to fit inside a bar or point. */
   const truncateLabel = (str, maxLen) =>
     str.length > maxLen ? str.slice(0, maxLen - 1) + "…" : str;
 
@@ -278,10 +230,8 @@
     const barSpacing = chartW / n;
     const barW = Math.max(1, barSpacing * 0.6);
 
-    // Pre-compute the Y position of the zero baseline once.
     const zeroY = y + PADDING_TOP + chartH - (-minVal / range) * chartH;
 
-    // Y-axis
     c.strokeStyle = "rgba(0,0,0,0.2)";
     c.lineWidth = 1;
     const GRID_LINES = 4;
@@ -300,7 +250,6 @@
       c.fillText(val.toFixed(1), x + PADDING_LEFT - 4, gy);
     }
 
-    // Bars
     for (let i = 0; i < n; i++) {
       const val = animated[i];
       const barX = x + PADDING_LEFT + i * barSpacing + (barSpacing - barW) / 2;
@@ -313,7 +262,6 @@
       roundRect(c, barX, barY, barW, Math.max(1, actualBarH), 3);
       c.fill();
 
-      // Label
       if (labels[i]) {
         const fontSize = Math.max(8, Math.min(11, barSpacing * 0.4));
         c.font = `${fontSize}px sans-serif`;
@@ -344,11 +292,9 @@
     const minVal = Math.min(...animated, 0);
     const range = maxVal - minVal || 1;
 
-    /** X coordinate for data point at index i. */
     const pointX = (i) =>
       x + PADDING_LEFT + (n === 1 ? chartW / 2 : (i / (n - 1)) * chartW);
 
-    // Grid lines
     c.strokeStyle = "rgba(0,0,0,0.2)";
     c.lineWidth = 1;
     const GRID_LINES = 4;
@@ -367,7 +313,6 @@
       c.fillText(val.toFixed(1), x + PADDING_LEFT - 4, gy);
     }
 
-    // Fill area under line (only meaningful with 2+ points)
     if (n > 1) {
       c.beginPath();
       for (let i = 0; i < n; i++) {
@@ -379,14 +324,12 @@
       c.lineTo(x + PADDING_LEFT + chartW, y + PADDING_TOP + chartH);
       c.lineTo(x + PADDING_LEFT, y + PADDING_TOP + chartH);
       c.closePath();
-      // Use the line colour at reduced opacity for the fill area
       c.globalAlpha = 0.2;
       c.fillStyle = palette[0];
       c.fill();
       c.globalAlpha = 1;
     }
 
-    // Line
     c.beginPath();
     c.strokeStyle = palette[0];
     c.lineWidth = 2.5;
@@ -400,7 +343,6 @@
     }
     c.stroke();
 
-    // Dots + labels
     for (let i = 0; i < n; i++) {
       const px = pointX(i);
       const py =
@@ -455,7 +397,6 @@
       c.lineWidth = 2;
       c.stroke();
 
-      // Percent label inside slice (only if slice is big enough)
       if (share > 0.07) {
         const midAngle = startAngle + sliceAngle / 2;
         const lx = cx + Math.cos(midAngle) * radius * 0.65;
@@ -470,7 +411,6 @@
       startAngle += sliceAngle;
     }
 
-    // Legend
     const legendX = x + 8;
     const legendY = y + PADDING + radius * 2 + 12;
     const cols = 2;
@@ -490,22 +430,18 @@
     }
   };
 
-  /** Draw one graph onto graphsCanvas. */
   const drawGraph = (c, g) => {
     const { centerX, centerY, width: W, height: H, bgColor, textColor, title, type } = g;
 
-    // Scale graph dimensions with the stage, just like positions
     const sw = runtime.stageWidth || 480;
     const sh = runtime.stageHeight || 360;
     const sW = W * (graphsCanvas.width / sw);
     const sH = H * (graphsCanvas.height / sh);
 
-    // Convert center from Scratch units to canvas pixels
     const centerPos = stageToCanvas(centerX, centerY);
     const x = centerPos.x - sW / 2;
     const y = centerPos.y - sH / 2;
 
-    // Background card
     if (g.shadow) {
       c.shadowColor = "rgba(0,0,0,0.18)";
       c.shadowBlur = 8;
@@ -518,17 +454,14 @@
     c.shadowBlur = 0;
     c.shadowOffsetY = 0;
 
-    // Border
     c.strokeStyle = "rgba(0,0,0,0.1)";
     c.lineWidth = 1;
     c.stroke();
 
-    // Clip to card
     c.save();
     roundRect(c, x + 1, y + 1, sW - 2, sH - 2, 7);
     c.clip();
 
-    // Title
     if (title) {
       c.fillStyle = textColor;
       c.font = `bold ${Math.max(10, Math.min(14, sW * 0.055))}px sans-serif`;
@@ -542,7 +475,6 @@
       else if (type === "line") drawLineChart(c, g, x, y, sW, sH);
       else if (type === "pie") drawPieChart(c, g, x, y, sW, sH);
     } else {
-      // Empty state
       c.fillStyle = "rgba(0,0,0,0.25)";
       c.font = `${Math.max(10, Math.min(13, sW * 0.05))}px sans-serif`;
       c.textAlign = "center";
@@ -566,18 +498,14 @@
     for (const g of graphs.values()) {
       if (g.visible) drawGraph(c, g);
     }
-    // Mark the canvas dirty so the draw hook uploads it to the GPU texture.
     graphsCanvasDirty = true;
   };
-
-  // ── Utility: parse JSON arrays from block arguments ───────────────────────
 
   const parseArray = (str) => {
     try {
       const v = JSON.parse(str);
       return Array.isArray(v) ? v : [v];
     } catch (_e) {
-      // Treat comma-separated plain strings as an array
       return String(str)
         .split(",")
         .map((s) => s.trim())
@@ -592,8 +520,6 @@
       return isFinite(n) ? n : 0;
     });
   };
-
-  // ── Extension class ───────────────────────────────────────────────────────
 
   const MENU_ICON =
     "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0MCA0MCI+DQogIDwhLS0gWSBheGlzIC0tPg0KICA8bGluZSB4MT0iNSIgeTE9IjMiIHgyPSI1IiB5Mj0iMzUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPg0KICA8IS0tIFggYXhpcyAtLT4NCiAgPGxpbmUgeDE9IjQiIHkxPSIzNSIgeDI9IjM3IiB5Mj0iMzUiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIyLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPg0KICA8IS0tIEJhcnMgKHNob3J0LCB0YWxsLCBtZWRpdW0pIC0tPg0KICA8cmVjdCB4PSI4IiAgeT0iMjQiIHdpZHRoPSI3IiBoZWlnaHQ9IjExIiByeD0iMS41IiBmaWxsPSIjZmZmIiBvcGFjaXR5PSIwLjk1Ii8+DQogIDxyZWN0IHg9IjE4IiB5PSIxMyIgd2lkdGg9IjciIGhlaWdodD0iMjIiIHJ4PSIxLjUiIGZpbGw9IiNmZmYiIG9wYWNpdHk9IjAuOTUiLz4NCiAgPHJlY3QgeD0iMjgiIHk9IjE4IiB3aWR0aD0iNyIgaGVpZ2h0PSIxNyIgcng9IjEuNSIgZmlsbD0iI2ZmZiIgb3BhY2l0eT0iMC45NSIvPg0KPC9zdmc+";
@@ -610,7 +536,6 @@
         blockIconURI: MENU_ICON,
 
         blocks: [
-          // ── Graph lifecycle ───────────────────────────────────────────
           {
             opcode: "createGraph",
             blockType: Scratch.BlockType.COMMAND,
@@ -641,7 +566,6 @@
             },
           },
           "---",
-          // ── Visibility ────────────────────────────────────────────────
           {
             opcode: "showGraph",
             blockType: Scratch.BlockType.COMMAND,
@@ -665,7 +589,6 @@
             },
           },
           "---",
-          // ── Data ──────────────────────────────────────────────────────
           {
             opcode: "setData",
             blockType: Scratch.BlockType.COMMAND,
@@ -758,7 +681,6 @@
             },
           },
           "---",
-          // ── Appearance ────────────────────────────────────────────────
           {
             opcode: "setTitle",
             blockType: Scratch.BlockType.COMMAND,
@@ -886,7 +808,6 @@
             },
           },
           "---",
-          // ── Reporters ─────────────────────────────────────────────────
           {
             opcode: "getValueByLabel",
             blockType: Scratch.BlockType.REPORTER,
@@ -966,8 +887,6 @@
       };
     }
 
-    // ── Block implementations ───────────────────────────────────────────────
-
     createGraph({ TYPE, NAME }) {
       const name = String(NAME);
       const type = ["bar", "line", "pie"].includes(String(TYPE))
@@ -1007,7 +926,6 @@
       const now = performance.now();
       const newValues = values.slice(0, len);
       g.labels = labels.slice(0, len);
-      // For existing points keep the current animated position as the start; new points grow from 0.
       g.animStartVals = newValues.map((_, i) =>
         g.animated[i] !== undefined ? g.animated[i] : 0
       );
@@ -1088,7 +1006,6 @@
     setPosition({ NAME, X, Y }) {
       const g = graphs.get(String(NAME));
       if (!g) return;
-      // Store the center position in Scratch units
       g.centerX = Scratch.Cast.toNumber(X);
       g.centerY = Scratch.Cast.toNumber(Y);
       scheduleRedraw();
