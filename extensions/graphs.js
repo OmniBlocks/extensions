@@ -24,6 +24,14 @@
   // and they can't float over editor modals/menus.
   const renderer = runtime.renderer;
 
+  // Guard: the custom skin relies on internal renderer APIs that packager builds
+  // do not expose. Fail fast with a clear message rather than a cryptic crash.
+  if (!renderer.exports || !renderer.exports.Skin) {
+    throw new Error(
+      "Graphs extension requires renderer.exports.Skin (not available in packaged builds)"
+    );
+  }
+
   /** 2D canvas we draw charts onto. */
   const graphsCanvas = document.createElement("canvas");
   /** Sync graphsCanvas to the actual GL canvas pixel dimensions. */
@@ -136,8 +144,9 @@
 
   /** Return coordinates scaled from Scratch stage units to graphsCanvas pixels. */
   const stageToCanvas = (sx, sy) => {
-    const sw = runtime.stageWidth || 480;
-    const sh = runtime.stageHeight || 360;
+    // Use renderer.getNativeSize() so the coordinate mapping always matches
+    // the canvas size even immediately after a NativeSizeChanged event.
+    const [sw, sh] = renderer.getNativeSize();
     const scaleX = graphsCanvas.width / sw;
     const scaleY = graphsCanvas.height / sh;
     // Scratch origin is centre; canvas origin is top-left
@@ -494,9 +503,9 @@
   const drawGraph = (c, g) => {
     const { centerX, centerY, width: W, height: H, bgColor, textColor, title, type } = g;
 
-    // Scale graph dimensions with the stage, just like positions
-    const sw = runtime.stageWidth || 480;
-    const sh = runtime.stageHeight || 360;
+    // Scale graph dimensions with the stage, just like positions.
+    // Use renderer.getNativeSize() to stay in sync with the canvas after a resize.
+    const [sw, sh] = renderer.getNativeSize();
     const sW = W * (graphsCanvas.width / sw);
     const sH = H * (graphsCanvas.height / sh);
 
