@@ -16,34 +16,15 @@
   const vm = Scratch.vm;
   const runtime = vm.runtime;
 
-  // ── Overlay canvas ────────────────────────────────────────────────────────
-  /** @type {HTMLCanvasElement} */
-  const overlayCanvas = document.createElement("canvas");
-  overlayCanvas.id = "omniGraphsOverlay";
-  Object.assign(overlayCanvas.style, {
-    position: "absolute",
-    top: "0",
-    left: "0",
-    width: "100%",
-    height: "100%",
-    pointerEvents: "none",
-  });
-
-  runtime.renderer.overlayContainer.appendChild(overlayCanvas);
-
-  const ctx = overlayCanvas.getContext("2d");
-
-  const scratchCanvas = runtime.renderer.canvas;
-
-  // Resize the overlay canvas to match the stage, accounting for device pixel ratio.
-  const resizeObserver = new ResizeObserver(() => {
-    const rect = scratchCanvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    overlayCanvas.width = rect.width * dpr;
-    overlayCanvas.height = rect.height * dpr;
-    redrawAll();
-  });
-  resizeObserver.observe(scratchCanvas);
+  // ── Pen skin (renders onto the main stage canvas) ─────────────────────────
+  // Using the pen layer means charts are composited into the WebGL scene, so
+  // MediaRecorder captures them and they don't float over editor UI.
+  const renderer = runtime.renderer;
+  const penSkinId = renderer.createPenSkin();
+  const penDrawableId = renderer.createDrawable("pen");
+  renderer.updateDrawableSkinId(penDrawableId, penSkinId);
+  /** @type {{_canvas: HTMLCanvasElement, _canvasDirty: boolean}} */
+  const penSkin = renderer._allSkins[penSkinId];
 
   // ── Graph store ───────────────────────────────────────────────────────────
   /** @type {Map<string, GraphData>} */
@@ -70,15 +51,15 @@
    * @property {number[]} animStartTimes - DOMHighResTimeStamp when each point's animation began
    */
 
-  /** Return coordinates scaled from Scratch stage units to overlay pixels. */
-  const stageToOverlay = (sx, sy) => {
-    const oW = overlayCanvas.width || scratchCanvas.clientWidth;
-    const oH = overlayCanvas.height || scratchCanvas.clientHeight;
+  /** Return coordinates scaled from Scratch stage units to pen canvas pixels. */
+  const stageToCanvas = (sx, sy) => {
+    const penCanvas = penSkin._canvas;
+    if (!penCanvas) return { x: 0, y: 0 };
     const sw = runtime.stageWidth || 480;
     const sh = runtime.stageHeight || 360;
-    const scaleX = oW / sw;
-    const scaleY = oH / sh;
-    // Scratch origin is centre; overlay origin is top-left
+    const scaleX = penCanvas.width / sw;
+    const scaleY = penCanvas.height / sh;
+    // Scratch origin is centre; canvas origin is top-left
     return {
       x: (sx + sw / 2) * scaleX,
       y: (sh / 2 - sy) * scaleY,
@@ -428,20 +409,20 @@
     }
   };
 
-  /** Draw one graph onto the overlay canvas. */
+  /** Draw one graph onto the pen canvas. */
   const drawGraph = (c, g) => {
     const { centerX, centerY, width: W, height: H, bgColor, textColor, title, type } = g;
 
     // Scale graph dimensions with the stage, just like positions
-    const oW = overlayCanvas.width || scratchCanvas.clientWidth;
-    const oH = overlayCanvas.height || scratchCanvas.clientHeight;
+    const penCanvas = penSkin._canvas;
+    if (!penCanvas) return;
     const sw = runtime.stageWidth || 480;
     const sh = runtime.stageHeight || 360;
-    const sW = W * (oW / sw);
-    const sH = H * (oH / sh);
+    const sW = W * (penCanvas.width / sw);
+    const sH = H * (penCanvas.height / sh);
 
-    // Convert center from Scratch units to overlay pixels
-    const centerPos = stageToOverlay(centerX, centerY);
+    // Convert center from Scratch units to pen canvas pixels
+    const centerPos = stageToCanvas(centerX, centerY);
     const x = centerPos.x - sW / 2;
     const y = centerPos.y - sH / 2;
 
@@ -498,13 +479,19 @@
   };
 
   const redrawAll = () => {
-    const W = overlayCanvas.width;
-    const H = overlayCanvas.height;
+    const penCanvas = penSkin._canvas;
+    if (!penCanvas) return;
+    const W = penCanvas.width;
+    const H = penCanvas.height;
     if (!W || !H) return;
-    ctx.clearRect(0, 0, W, H);
+    const c = penCanvas.getContext("2d");
+    c.clearRect(0, 0, W, H);
     for (const g of graphs.values()) {
-      if (g.visible) drawGraph(ctx, g);
+      if (g.visible) drawGraph(c, g);
     }
+    // Notify the renderer to re-upload the pen canvas to its GPU texture.
+    penSkin._canvasDirty = true;
+    renderer.dirty = true;
   };
 
   // ── Utility: parse JSON arrays from block arguments ───────────────────────
