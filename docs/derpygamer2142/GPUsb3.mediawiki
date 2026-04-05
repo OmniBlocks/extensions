@@ -1,0 +1,641 @@
+= GPU.sb3 =
+
+GPU.sb3 is an extension that allows you to run [[WebGPU]] compute shaders from your Scratch projects, enabling massively parallel computation on the GPU.
+
+; Extension ID : <code>gpusb3</code>
+; Author : derpygamer2142
+; License : MIT
+; Requires : Unsandboxed execution
+
+== Overview ==
+
+GPU.sb3 exposes a full WebGPU compute shader pipeline directly to Scratch blocks. You can:
+
+* Allocate GPU buffers and textures
+* Upload data from JavaScript ArrayBuffers to the GPU
+* Write compute shaders using WGSL blocks
+* Run shaders with configurable dispatch dimensions
+* Read results back to ArrayBuffer views
+
+The extension requires WebGPU support in the browser. As of 2024, WebGPU is available in Chrome/Edge 113+ and experimentally in Firefox and Safari. It also requires running unsandboxed.
+
+=== Required setup ===
+
+Before using any GPU.sb3 blocks you must either:
+
+* Add '''Reconnect to GPU''' to your project's startup (the extension calls this automatically when loaded, but reconnecting after page load may be needed), or
+* Use the '''WebGPU available?''' and '''Connected to GPU?''' booleans to check readiness before executing shaders.
+
+=== Typical workflow ===
+
+# '''Reconnect to GPU''' — acquire device
+# Create '''bind group layout''' and its '''entries''' — describe what the GPU receives
+# Create '''buffers''' / '''textures''' — allocate GPU memory
+# Create '''bind group''' — bind resources to bindings
+# Define '''shader''' hat with WGSL blocks inside — write shader code
+# '''compile shaders''' — turn blocks into WGSL and compile
+# Write CPU data — use ArrayBuffer blocks, then '''Write [SIZE] elements … to buffer'''
+# '''Run shader''' — dispatch workgroups
+# Copy output buffer to a MAP_READ buffer, '''Read buffer''' — retrieve results
+# Read data out of an ArrayBuffer '''view'''
+
+== Block reference ==
+
+=== GPU management ===
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>WebGPU available?</code> || Boolean || Returns <code>true</code> if the browser supports WebGPU (<code>navigator.gpu</code> exists).
+|-
+| <code>Connected to GPU?</code> || Boolean || Returns <code>true</code> if the extension has successfully acquired a WebGPU device.
+|-
+| <code>Reconnect to GPU</code> || Command || Releases all existing resources and reinitialises the WebGPU adapter and device. Run this at the start of your project to ensure a clean state.
+|-
+| <code>compile shaders</code> || Command || Traverses all '''Define shader''' hat blocks and compiles them into WGSL shader modules. Must be called before '''Run shader'''.
+|-
+| <code>Run shader [GPUFUNC] using bind group [BINDGROUP] dimensions x: [X] y: [Y] z: [Z]</code> || Command || Dispatches a compiled shader. <code>GPUFUNC</code> is the shader name from its hat block; <code>BINDGROUP</code> is the bind group to use. X/Y/Z are the workgroup dispatch counts.
+|}
+
+=== Error handling ===
+
+GPU.sb3 catches GPU errors and exposes them to the project rather than throwing unhandled exceptions.
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>when error thrown</code> || Hat (event) || Triggered whenever the extension catches an error. Use this to handle GPU errors gracefully.
+|-
+| <code>Error</code> || Reporter || Returns the current error object as a JSON string. Fields: <code>name</code>, <code>body</code>, <code>source</code>, <code>full</code>.
+|-
+| <code>clear current error</code> || Command || Clears the stored error so subsequent checks start fresh.
+|}
+
+Example error object:
+<syntaxhighlight lang="json">
+{
+  "name": "DeviceLost",
+  "body": "Device was lost.",
+  "source": "wgpu",
+  "full": { ... }
+}
+</syntaxhighlight>
+
+=== Shader definition (hat) ===
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>Define shader [NAME] using bind group layout [BGL]</code> || Hat (event) || All WGSL blocks placed under this hat become the body of shader <code>NAME</code>. <code>BGL</code> must match the name of a bind group layout created with '''Create bind group layout'''. Multiple hats can be active at the same time.
+|}
+
+== Data input blocks ==
+
+These blocks manage the GPU-side resources that shaders read from and write to.
+
+=== Bind group layouts ===
+
+A '''bind group layout''' describes the types and bindings that a shader expects. It must be created before the bind group or shader that uses it.
+
+Bind group layout blocks use an orange/gold colour.
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>Create bind group layout called [NAME]</code> || Conditional (C‑shape) || Opens a scope. Place '''Add bind group layout entry''' blocks inside. When the scope ends, the layout named <code>NAME</code> is registered.
+|-
+| <code>Add bind group layout entry with binding [BINDING] for type [TYPE] and descriptor [DESC]</code> || Command || Adds one binding entry to the enclosing layout. <code>BINDING</code> is the slot index (0, 1, 2…). <code>TYPE</code> is from the [[#BGLENTRYTYPES|BGLENTRYTYPES menu]] (<code>buffer</code> or <code>storageTexture</code>). <code>DESC</code> is a descriptor reporter (see below).
+|-
+| <code>Buffer layout entry descriptor with usage type [TYPE]</code> || Reporter || Produces a descriptor for a buffer entry. <code>TYPE</code> is from the [[#BUFFERENTRYTYPE|BUFFERENTRYTYPE menu]]: <code>read-only-storage</code>, <code>storage</code>, or <code>uniform</code>.
+|-
+| <code>Texture layout entry descriptor with usage type [TYPE] and format [FORMAT]</code> || Reporter || Produces a descriptor for a storage texture entry. <code>TYPE</code> is <code>write-only</code>, <code>read-only</code>, or <code>read-write</code>. <code>FORMAT</code> is from the [[#TEXTURECOLORFORMATS|texture format menu]].
+|}
+
+=== Bind groups ===
+
+A '''bind group''' pairs actual resources (buffers, textures) with the bindings described by a layout.
+
+Bind group blocks use a reddish-orange colour.
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>Create bind group called [NAME] using layout [LAYOUT]</code> || Conditional (C‑shape) || Opens a scope. Place '''Add bind group entry''' blocks inside. <code>LAYOUT</code> must match an existing bind group layout name.
+|-
+| <code>Add bind group entry with binding [BINDING] of type [TYPE] using resource named [RESOURCE]</code> || Command || Binds a named resource to a slot inside the enclosing bind group. <code>TYPE</code> is <code>buffer</code> or <code>storageTexture</code>.
+|-
+| <code>Usage [A] | [B]</code> || Reporter || Performs a bitwise OR of two usage flags. Use this to combine multiple [[#BUFFERUSAGE|buffer usage]] flags (e.g. <code>STORAGE | COPY_SRC</code>).
+|}
+
+=== GPU buffers ===
+
+A '''GPU buffer''' is a block of GPU memory. It is distinct from a JavaScript ArrayBuffer.
+
+Buffer blocks use a maroon colour.
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>Create buffer called [NAME] with size(in bytes) [SIZE] and usage flags [USAGE]</code> || Command || Allocates a GPUBuffer. <code>SIZE</code> must be a multiple of 4. <code>USAGE</code> is a combination of [[#BUFFERUSAGE|buffer usage flags]].
+|-
+| <code>Buffer usage [USAGE]</code> || Reporter || Returns the numeric constant for a named usage flag. Combine multiple flags with the '''Usage A | B''' block.
+|-
+| <code>Write [SIZE] elements of data from arraybuffer [ARRAY] to buffer [BUFFER] from offset [OFF1] to offset [OFF2]</code> || Command || Copies data from a CPU-side ArrayBuffer (or view) to a GPU buffer. <code>OFF1</code> is the byte offset into the GPU buffer; <code>OFF2</code> is the element offset into the ArrayBuffer view.
+|-
+| <code>Copy [NUMBYTES] bytes of data from buffer [BUF1] from position [BUF1OFF] to buffer [BUF2] at position [BUF2OFF]</code> || Command || GPU-side buffer copy. Offsets are '''in bytes'''. Commonly used to copy from a <code>STORAGE</code> buffer into a <code>MAP_READ</code> buffer before reading back results.
+|-
+| <code>Read buffer [BUFFER] to arraybuffer [ARRAYBUFFER]</code> || Command || Maps a <code>MAP_READ</code> buffer and copies its contents into a CPU-side ArrayBuffer. The buffer must have been created with the <code>MAP_READ</code> usage flag.
+|-
+| <code>Copy texture [TEXTURE] to buffer [BUFFER] with dimensions [WIDTH] [HEIGHT]</code> || Command || Reads the pixels of a GPU texture into a GPU buffer.
+|}
+
+=== GPU textures ===
+
+Texture blocks use a sky-blue colour.
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>Create texture called [NAME] width dimensions [WIDTH] [HEIGHT], color format [FORMAT] and usage [USAGE]</code> || Command || Allocates a 2D GPUTexture. <code>FORMAT</code> is from the [[#TEXTURECOLORFORMATS|texture format menu]]. <code>USAGE</code> is a combination of texture usage flags.
+|-
+| <code>Texture usage [USAGE]</code> || Reporter || Returns the numeric constant for a named texture usage flag.
+|-
+| <code>Copy elements with dimensions [WIDTH], [HEIGHT] from offset [OFFSET] in buffer [BUFFER] to texture [TEXTURE]</code> || Command || Copies pixel data from a GPU buffer into a GPU texture. <code>OFFSET</code> is in bytes.
+|-
+| <code>Write texture data from [IMAGE] to texture [TEXTURE]</code> || Command || Copies a project costume's pixel data directly into a GPU texture. The costume is selected from the [[#IMAGELIST|image list menu]].
+|}
+
+=== Buffer and texture usage flags ===
+
+==== Buffer usage flags <span id="BUFFERUSAGE"></span> ====
+
+{| class="wikitable"
+! Flag !! Value !! Notes
+|-
+| <code>MAP_READ</code> || 1 || Allows mapping the buffer for CPU reads. Required for '''Read buffer'''.
+|-
+| <code>MAP_WRITE</code> || 2 || Allows mapping the buffer for CPU writes.
+|-
+| <code>COPY_SRC</code> || 4 || Source of a copy operation.
+|-
+| <code>COPY_DST</code> || 8 || Destination of a copy or write operation.
+|-
+| <code>INDEX</code> || 16 || Index buffer (not used in compute).
+|-
+| <code>VERTEX</code> || 32 || Vertex buffer (not used in compute).
+|-
+| <code>UNIFORM</code> || 64 || Uniform buffer.
+|-
+| <code>STORAGE</code> || 128 || Storage buffer (read/write in shaders).
+|-
+| <code>QUERY_RESOLVE</code> || 256 || For resolving query sets.
+|}
+
+The most common combination for a read-back workflow is <code>STORAGE | COPY_SRC</code> (128 | 4 = 132) for the shader output buffer, and <code>MAP_READ | COPY_DST</code> (1 | 8 = 9) for the staging buffer.
+
+==== Texture usage flags ====
+
+{| class="wikitable"
+! Flag !! Notes
+|-
+| <code>COPY_SRC</code> || Source of a texture copy.
+|-
+| <code>COPY_DST</code> || Destination of a texture write.
+|-
+| <code>TEXTURE_BINDING</code> || Allows the texture to be bound as a sampled texture (read in shaders).
+|-
+| <code>STORAGE_BINDING</code> || Allows the texture to be bound as a storage texture (read/write in compute shaders).
+|}
+
+== ArrayBuffer blocks ==
+
+ArrayBuffers are CPU-side memory that you use to prepare data for upload to the GPU and to read results back. They are standard JavaScript <code>ArrayBuffer</code> objects wrapped in typed-array views.
+
+ArrayBuffer blocks use a red colour.
+
+=== Buffer management ===
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>List arraybuffers</code> || Reporter || Returns a JSON array of the names of all currently allocated ArrayBuffers.
+|-
+| <code>Create arraybuffer called [ARRAYBUFFER] with length [LENGTH]</code> || Command || Creates a new zeroed ArrayBuffer with the given byte length.
+|-
+| <code>Create arraybuffer and view called [ARRAYBUFFER] from array [ARRAY] of type [TYPE]</code> || Command || Creates both an ArrayBuffer and an initial typed-array view from a JSON array (e.g. <code>[1,2,3]</code>). <code>TYPE</code> is from the [[#TYPEDARRAYTYPES|typed array types menu]].
+|-
+| <code>Delete arraybuffer [ARRAYBUFFER]</code> || Command || Frees the named ArrayBuffer and any views that reference it.
+|-
+| <code>Resize arraybuffer [ARRAYBUFFER] to [SIZE] bytes</code> || Command || Resizes an existing ArrayBuffer. Existing data may be truncated or padded with zeros.
+|}
+
+=== View management ===
+
+A '''view''' is a typed-array window into an ArrayBuffer that lets you read and write individual elements at a specific numeric type.
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>List views</code> || Reporter || Returns a JSON array of the names of all currently allocated views.
+|-
+| <code>View arraybuffer [ARRAYBUFFER] as [TYPE] called [NAME]</code> || Command || Creates a typed-array view over an ArrayBuffer. <code>TYPE</code> is from the [[#TYPEDARRAYTYPES|typed array types menu]].
+|-
+| <code>Delete view [NAME]</code> || Command || Removes the named view.
+|}
+
+=== View data operations ===
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>Set item [INDEX] of view [VIEW] to [VALUE]</code> || Command || Sets a single element of the view at the given index.
+|-
+| <code>Copy data from array [ARRAY] to view [VIEW] from index [INDEX]</code> || Command || Sets multiple elements of a view from a JSON array, starting at <code>INDEX</code>.
+|-
+| <code>Fill items [START] to [END] of view [VIEW] with [VALUE]</code> || Command || Sets every element between <code>START</code> and <code>END</code> (exclusive) to <code>VALUE</code>.
+|-
+| <code>Item [INDEX] of arraybuffer view [VIEW]</code> || Reporter || Returns a single element from the view.
+|-
+| <code>Items [START] to [END] of view [VIEW]</code> || Reporter || Returns a JSON array containing the elements from index <code>START</code> to <code>END</code> (exclusive).
+|-
+| <code>Get view [VIEW] as array</code> || Reporter || Returns the entire view as a JSON array.
+|-
+| <code>[PROP] of view [VIEW]</code> || Reporter || Returns a property of the typed array. Options: <code>BYTES_PER_ELEMENT</code>, <code>byteLength</code>, <code>length</code>.
+|}
+
+=== Typed array types <span id="TYPEDARRAYTYPES"></span> ===
+
+{| class="wikitable"
+! Type !! Element size !! Notes
+|-
+| <code>Int32Array</code> || 4 bytes || Signed 32-bit integer. Matches WGSL <code>i32</code>.
+|-
+| <code>Uint32Array</code> || 4 bytes || Unsigned 32-bit integer. Matches WGSL <code>u32</code>.
+|-
+| <code>Float32Array</code> || 4 bytes || 32-bit float. Matches WGSL <code>f32</code>. '''Most common for GPU data.'''
+|-
+| <code>Int8Array</code> || 1 byte || 8-bit signed integer.
+|-
+| <code>Uint8Array</code> || 1 byte || 8-bit unsigned integer. Useful for raw byte access.
+|-
+| <code>Uint8ClampedArray</code> || 1 byte || Clamped to 0–255.
+|-
+| <code>Int16Array</code> || 2 bytes || 16-bit signed integer.
+|-
+| <code>Uint16Array</code> || 2 bytes || 16-bit unsigned integer.
+|-
+| <code>BigInt64Array</code> || 8 bytes || 64-bit signed integer (JavaScript BigInt).
+|-
+| <code>BigUint64Array</code> || 8 bytes || 64-bit unsigned integer (JavaScript BigInt).
+|-
+| <code>Float64Array</code> || 8 bytes || 64-bit float. Not natively supported by WebGPU.
+|}
+
+== WGSL blocks ==
+
+WGSL (WebGPU Shading Language) blocks let you construct compute shaders using Scratch-style programming. They are placed inside '''Define shader''' hat blocks and are compiled into real WGSL source code by '''compile shaders'''.
+
+For full WGSL language documentation see:
+* [https://www.w3.org/TR/WGSL/ WGSL Specification]
+* [https://google.github.io/tour-of-wgsl/ Tour of WGSL]
+
+=== Variables <span id="variables"></span> ===
+
+Variable blocks use a yellow colour.
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>declare [VARTYPE] variable as [NAME] with value [VALUE]: [TYPE]</code> || Command || Declares a local variable. <code>VARTYPE</code> is <code>var</code>, <code>let</code>, or <code>const</code>. <code>TYPE</code> is the WGSL type (or <code>auto</code> to infer). Leave <code>VALUE</code> empty to declare without initialising.
+|-
+| <code>Bind shader resource # [BINDNUM] to variable [VARNAME] with settings [SETTINGS] type [INPUTTYPE]</code> || Command || Emits a <code>@group(0) @binding(...) var&lt;...&gt;</code> declaration. <code>SETTINGS</code> is the variable's address space and access mode (e.g. <code>storage, read_write</code>). <code>INPUTTYPE</code> is the WGSL type (e.g. <code>array&lt;f32&gt;</code>). Leave <code>SETTINGS</code> empty for textures and samplers.
+|-
+| <code>Variable usage [USAGE] next [NEXT]</code> || Reporter || Builds a comma-separated access mode/address space string for use in <code>Bind shader resource</code>. Chain multiple with the <code>NEXT</code> input.
+|-
+| <code>Variable [VARNAME] [VAROP] [INPUT]</code> || Command || Emits a variable assignment statement such as <code>x += 1;</code>. <code>VAROP</code> options: <code>=</code>, <code>+=</code>, <code>-=</code>, <code>*=</code>, <code>/=</code>, <code>%=</code>, <code>&=</code>, <code>|=</code>, <code>^=</code>, <code>>>=</code>, <code><<=</code>.
+|-
+| <code>Get variable [NAME]</code> || Reporter || Emits the variable name as a WGSL expression.
+|-
+| <code>Pointer to variable [VAR]</code> || Reporter || Emits <code>&amp;VAR</code> — a pointer to the variable. Required by some atomic functions.
+|}
+
+=== Types ===
+
+Type blocks use a dark-cyan colour.
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>Base type [TYPE]</code> || Reporter || Returns a primitive WGSL type: <code>i32</code>, <code>u32</code>, <code>f32</code>, or <code>bool</code>.
+|-
+| <code>Create type [TYPE] of [SUBTYPE], length(array only!) [LENGTH]</code> || Reporter || Constructs a parametric type such as <code>vec3&lt;f32&gt;</code> or <code>array&lt;f32, 10&gt;</code>. <code>TYPE</code> is <code>vec2</code>, <code>vec3</code>, <code>vec4</code>, or <code>array</code>.
+|-
+| <code>Matrix type with [COLUMNS] columns and [ROWS] rows</code> || Reporter || Returns a matrix type like <code>mat2x3</code>.
+|-
+| <code>Texture type of [TYPE] with access [ACCESS]</code> || Reporter || Returns <code>texture_storage_2d&lt;FORMAT, ACCESS&gt;</code>. Used in '''Bind shader resource''' for storage textures.
+|-
+| <code>Type of struct [STRUCT]</code> || Reporter || Returns the name of a struct type so it can be used as a type in variable declarations.
+|-
+| <code>Create atomic of type [BASE]</code> || Reporter || Returns <code>atomic&lt;i32&gt;</code> or <code>atomic&lt;u32&gt;</code>. Use as a type in variable declarations.
+|}
+
+=== Objects and structs ===
+
+Object blocks use a dark-green colour.
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>Construct type [TYPE] with values [VALUES]</code> || Reporter || Emits a constructor call such as <code>f32(1.5)</code> or <code>vec3&lt;f32&gt;(1.0, 2.0, 3.0)</code>. <code>VALUES</code> is a comma-separated argument string.
+|-
+| <code>Declare struct called [NAME]</code> || Conditional (C‑shape) || Opens a struct declaration scope. Place '''Add property''' blocks inside.
+|-
+| <code>Add property called [PROPERTY] with type [TYPE] to struct</code> || Command || Adds a field to the enclosing struct.
+|-
+| <code>In object [ARRAY] get index [INDEX]</code> || Reporter || Emits <code>ARRAY[INDEX]</code> — array/vector element access.
+|-
+| <code>In object [OBJECT] get property [PROP]</code> || Reporter || Emits <code>OBJECT.PROP</code> — struct/swizzle access.
+|}
+
+=== Compute shader entry point ===
+
+Control-flow blocks use a light-brown colour.
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>Computer shader with workgroup size [WGSIZE]</code> || Conditional (C‑shape) || Emits the <code>@compute @workgroup_size(...) fn computeShader(...)</code> entry point. <code>WGSIZE</code> is a JSON array such as <code>[64]</code> or <code>[8,8]</code>. Place all shader logic inside. The built-in variables <code>workgroup_id</code>, <code>local_invocation_id</code>, <code>global_invocation_id</code>, <code>local_invocation_index</code>, and <code>num_workgroups</code> are automatically provided.
+|}
+
+=== Control flow ===
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>For [VARNAME] in range [START], [END]</code> || Conditional (C‑shape) || Emits a <code>loop</code> that increments <code>VARNAME</code> from <code>START</code> to <code>END</code>.
+|-
+| <code>While [COND]</code> || Conditional (C‑shape) || Emits a <code>while (COND) { ... }</code> loop. Place blocks inside for the loop body.
+|-
+| <code>break</code> || Command (terminal) || Emits a <code>break;</code> statement.
+|-
+| <code>continue</code> || Command (terminal) || Emits a <code>continue;</code> statement.
+|}
+
+The '''For''' and '''While''' blocks are implemented as CONDITIONAL blocks (C‑shapes). Any Scratch <code>if</code> or <code>if‑else</code> block placed inside a shader hat is also compiled to WGSL.
+
+=== Functions ===
+
+Function blocks use a purple colour.
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>WGSL builtin [OPERATION] with args [VALUE]</code> || Reporter || Calls a WGSL built-in function. <code>VALUE</code> can be a single value or a '''Func arg input''' chain. See [[#WGSLFUNCS|built-in function list]] below.
+|-
+| <code>Func arg input [ARG], next [NEXT]</code> || Reporter || Builds a comma-separated argument list. Nest multiples in the <code>NEXT</code> input to pass more than one argument.
+|-
+| <code>Def function [FUNCNAME] that returns type [TYPE] with args [ARGS]</code> || Conditional (C‑shape) || Declares a WGSL function. <code>TYPE</code> is the return type (<code>void</code> returns nothing). Place '''Def arg''' blocks in <code>ARGS</code> to define parameters.
+|-
+| <code>Def arg [ARGNAME]: [ARGTYPE], next [NEXTARG]</code> || Reporter || Declares one parameter of a function. Chain multiple with <code>NEXTARG</code>.
+|-
+| <code>Get function arg [ARGNAME]</code> || Reporter || Emits the name of a function parameter so it can be used in the function body.
+|-
+| <code>Return [TORETURN]</code> || Command (terminal) || Emits a <code>return TORETURN;</code> statement.
+|-
+| <code>Run function [FUNCNAME] with args [ARGS]</code> (command) || Command || Calls a function and discards the return value.
+|-
+| <code>Run function [FUNCNAME] with args [ARGS]</code> (reporter) || Reporter || Calls a function and uses its return value as an expression.
+|}
+
+==== Built-in WGSL functions <span id="WGSLFUNCS"></span> ====
+
+{| class="wikitable"
+! Function !! Notes
+|-
+| <code>all</code>, <code>any</code> || Boolean vector reductions
+|-
+| <code>arrayLength</code> || Length of a runtime-sized array
+|-
+| <code>abs</code>, <code>sign</code>, <code>saturate</code> || Value clamping/sign
+|-
+| <code>floor</code>, <code>ceil</code>, <code>trunc</code>, <code>fract</code> || Rounding operations (note: use Scratch's operator blocks for floor/ceil/round — they are compiled to WGSL equivalents)
+|-
+| <code>sqrt</code>, <code>inverseSqrt</code> || Square root
+|-
+| <code>sin</code>, <code>cos</code>, <code>tan</code>, <code>asin</code>, <code>acos</code>, <code>atan</code> || Trigonometry (radians)
+|-
+| <code>sinh</code>, <code>cosh</code>, <code>asinh</code> || Hyperbolic trig
+|-
+| <code>exp</code>, <code>exp2</code>, <code>log</code>, <code>log2</code> || Exponential / logarithm
+|-
+| <code>degrees</code>, <code>radians</code> || Angle conversion
+|-
+| <code>length</code>, <code>normalize</code> || Vector geometry
+|-
+| <code>determinant</code>, <code>transpose</code> || Matrix operations
+|-
+| <code>modf</code>, <code>frexp</code> || Float decomposition
+|-
+| <code>countLeadingZeros</code>, <code>countTrailingZeros</code>, <code>countOneBits</code>, <code>reverseBits</code>, <code>firstLeadingBit</code>, <code>firstTrailingBit</code> || Bit manipulation
+|-
+| <code>bitcast</code> || Reinterpret bits as another type
+|-
+| <code>quantizeToF16</code> || Round to f16 precision
+|-
+| <code>pack2x16float</code>, <code>pack2x16snorm</code>, <code>pack2x16unorm</code>, <code>pack4x8snorm</code>, <code>pack4x8unorm</code> || Pack floats into integers
+|-
+| <code>unpack2x16float</code>, <code>unpack2x16snorm</code>, <code>unpack2x16unorm</code>, <code>unpack4x8snorm</code>, <code>unpack4x8unorm</code> || Unpack integers into floats
+|-
+| <code>textureDimensions</code>, <code>textureLoad</code>, <code>textureStore</code>, <code>textureNumLayers</code>, <code>textureNumLevels</code>, <code>textureNumSamples</code> || Texture operations (compute-compatible)
+|-
+| <code>i32</code>, <code>u32</code>, <code>f32</code>, <code>bool</code> || Explicit type conversions
+|}
+
+'''Note:''' Scratch operator blocks (<code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, <code>mod</code>, comparisons, <code>and</code>, <code>or</code>, math operations) are all supported inside shader hats and are compiled to their WGSL equivalents. Fragment-shader-only functions (<code>dpdx</code>, <code>textureSample</code>, etc.) are intentionally excluded.
+
+=== Arbitrary WGSL ===
+
+Arbitrary WGSL blocks use a dark-blue colour. Use these as an escape hatch when no other block covers what you need.
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>Arbitrary WGSL [TEXT]</code> (command) || Command || Inserts raw WGSL text as a statement.
+|-
+| <code>Arbitrary WGSL [TEXT]</code> (reporter) || Reporter || Inserts raw WGSL text as an expression.
+|}
+
+== Thread safety ==
+
+=== Atomic operations ===
+
+Atomic blocks use a light-red colour. Atomics allow safe read-modify-write operations across shader threads.
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>Load atomic [ATOMIC]</code> || Reporter || Performs an <code>atomicLoad</code> on a pointer-to-atomic and returns the value. Pass a '''Pointer to variable''' block.
+|-
+| <code>Perform operation [OP] on atomic [ATOMIC] with value [VALUE]</code> (command) || Command || Performs an atomic operation and discards the result.
+|-
+| <code>Perform operation [OP] on atomic [ATOMIC] with value [VALUE]</code> (reporter) || Reporter || Performs an atomic operation and returns the old value.
+|}
+
+Available atomic operations:
+
+{| class="wikitable"
+! Operation !! Effect
+|-
+| <code>atomicStore</code> || Stores <code>VALUE</code> to the atomic.
+|-
+| <code>atomicAdd</code> || Atomically adds <code>VALUE</code>; returns old value.
+|-
+| <code>atomicSub</code> || Atomically subtracts <code>VALUE</code>; returns old value.
+|-
+| <code>atomicMax</code> || Atomically keeps the maximum; returns old value.
+|-
+| <code>atomicMin</code> || Atomically keeps the minimum; returns old value.
+|-
+| <code>atomicAnd</code> || Atomically bitwise-ANDs; returns old value.
+|-
+| <code>atomicOr</code> || Atomically bitwise-ORs; returns old value.
+|-
+| <code>atomicXor</code> || Atomically bitwise-XORs; returns old value.
+|-
+| <code>atomicExchange</code> || Swaps with <code>VALUE</code>; returns old value.
+|-
+| <code>atomicCompareExchangeWeak</code> || CAS operation; returns struct with old value and exchange status.
+|}
+
+=== Barriers ===
+
+{| class="wikitable" style="width:100%"
+! Block !! Type !! Description
+|-
+| <code>Barrier [TYPE]</code> || Command || Inserts a synchronisation barrier. All threads in the workgroup must reach this point before any can proceed past it.
+|}
+
+Barrier types:
+
+{| class="wikitable"
+! Type !! Synchronises
+|-
+| <code>storageBarrier</code> || Storage buffer reads/writes
+|-
+| <code>workgroupBarrier</code> || Workgroup shared memory
+|-
+| <code>textureBarrier</code> || Texture reads/writes
+|}
+
+== Texture formats <span id="TEXTURECOLORFORMATS"></span> ==
+
+{| class="wikitable"
+! Format !! Bits !! Channels !! Type
+|-
+| <code>r8unorm</code> || 8 || R || Unsigned normalised (0–1)
+|-
+| <code>r8snorm</code> || 8 || R || Signed normalised (−1–1)
+|-
+| <code>r8uint</code> || 8 || R || Unsigned integer
+|-
+| <code>r8sint</code> || 8 || R || Signed integer
+|-
+| <code>r16uint</code>, <code>r16sint</code>, <code>r16float</code> || 16 || R || Integer / float
+|-
+| <code>rg8unorm</code>, <code>rg8snorm</code>, <code>rg8uint</code>, <code>rg8sint</code> || 16 || RG ||
+|-
+| <code>r32uint</code>, <code>r32sint</code>, <code>r32float</code> || 32 || R ||
+|-
+| <code>rg16uint</code>, <code>rg16sint</code>, <code>rg16float</code> || 32 || RG ||
+|-
+| <code>rgba8unorm</code>, <code>rgba8snorm</code>, <code>rgba8uint</code>, <code>rgba8sint</code> || 32 || RGBA ||
+|-
+| <code>bgra8unorm</code>, <code>bgra8unorm-srgb</code> || 32 || BGRA || sRGB variant available
+|-
+| <code>rg32uint</code>, <code>rg32sint</code>, <code>rg32float</code> || 64 || RG ||
+|-
+| <code>rgba16uint</code>, <code>rgba16sint</code>, <code>rgba16float</code> || 64 || RGBA ||
+|-
+| <code>rgba32uint</code>, <code>rgba32sint</code>, <code>rgba32float</code> || 128 || RGBA || Highest precision
+|}
+
+== Example: double every element in an array ==
+
+This example allocates a 3-element float array, doubles each element on the GPU, and reads the result back.
+
+=== Setup ===
+
+<pre>
+when green flag clicked
+Reconnect to GPU
+
+// ArrayBuffer with input data [1, 2, 3]
+Create arraybuffer and view called [data] from array [[1, 2, 3]] of type (Float32Array v)
+
+// GPU buffer: storage + copy_src (132 = 128 | 4)
+Create buffer called [gpuData] with size(in bytes) [12] and usage flags [132]
+
+// Staging buffer for readback: map_read + copy_dst (9 = 1 | 8)
+Create buffer called [staging] with size(in bytes) [12] and usage flags [9]
+
+// Bind group layout
+Create bind group layout called [myBGL]
+    Add bind group layout entry with binding [0] for type (buffer v) and descriptor
+        (Buffer layout entry descriptor with usage type (storage v))
+
+// Bind group
+Create bind group called [myBG] using layout [myBGL]
+    Add bind group entry with binding [0] of type (buffer v) using resource named [gpuData]
+
+compile shaders
+</pre>
+
+=== Shader hat ===
+
+<pre>
+Define shader [double] using bind group layout [myBGL]
+    Bind shader resource # [0] to variable [data] with settings [storage, read_write] type [array<f32>]
+    Computer shader with workgroup size [[64]]
+        declare var variable as [idx] with value
+            (In object [global_invocation_id] get property [x]) : (auto v)
+        Variable [data] [+=]
+            (In object [data] get index (Get variable [idx]))
+</pre>
+
+=== Run and read back ===
+
+<pre>
+// Upload CPU data to GPU
+Write [3] elements of data from arraybuffer [data] to buffer [gpuData] from offset [0] to offset [0]
+
+// Dispatch 1 workgroup (covers 3 elements, workgroup_size is 64)
+Run shader [double] using bind group [myBG] dimensions x: [1] y: [1] z: [1]
+
+// Copy to staging buffer and read back
+Copy [12] bytes of data from buffer [gpuData] from position [0] to buffer [staging] at position [0]
+Read buffer [staging] to arraybuffer [result]
+View arraybuffer [result] as (Float32Array v) called [resultView]
+
+say (Get view [resultView] as array)  // expect [2, 4, 6]
+</pre>
+
+== Notes and known limitations ==
+
+* '''Compute shaders only.''' Fragment/vertex shaders are not supported. Texture samplers do not work in compute shaders and are therefore hidden.
+* '''Buffer offsets are in bytes.''' When using <code>copyBufferToBuffer</code> or <code>writeBuffer</code>, double-check whether the offset parameter is in bytes or elements — the block text says "bytes" where applicable.
+* '''Buffer sizes must be multiples of 4.''' This is a WebGPU requirement.
+* '''MAP_READ buffers cannot be STORAGE buffers.''' Always use a two-buffer approach: a STORAGE buffer for the shader, and a separate MAP_READ | COPY_DST staging buffer to read results back.
+* '''miyo's buffer extension integration.''' If the <code>0znzwBuffers</code> extension is also loaded, GPU.sb3 will automatically detect it and you can reference its buffers.
+* '''Error events.''' Unhandled GPU errors (device lost, validation errors) trigger the <code>when error thrown</code> hat. Always include error handling in production projects.
+
+== See also ==
+
+* [https://www.w3.org/TR/webgpu/ WebGPU Specification]
+* [https://www.w3.org/TR/WGSL/ WGSL Specification]
+* [https://google.github.io/tour-of-wgsl/ Tour of WGSL (interactive)]
+* [https://toji.dev/webgpu-best-practices/error-handling.html WebGPU Error Handling Best Practices]
+
+[[Category:Extensions]]
+[[Category:derpygamer2142]]
+[[Category:GPU]]
+[[Category:WebGPU]]
