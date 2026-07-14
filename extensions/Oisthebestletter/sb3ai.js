@@ -58,8 +58,8 @@ async function importVerifiedModule(url, expectedIntegrity) {
 
   const { pipeline } = module;
 
-  let classifier;
-  let generator;
+  let classifierPromise;
+  let generatorPromise;
   let systemPrompt = "";
 
   async function getClassifier() {
