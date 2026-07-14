@@ -63,23 +63,23 @@ async function importVerifiedModule(url, expectedIntegrity) {
   let systemPrompt = "";
 
   async function getClassifier() {
-    if (!classifier) {
-      classifier = await pipeline("sentiment-analysis");
+    if (!classifierPromise) {
+      classifierPromise = pipeline("sentiment-analysis");
     }
-    return classifier;
+    return classifierPromise;
   }
 
   async function getGenerator() {
-    if (!generator) {
+    if (!generatorPromise) {
       // This model publishes onnx/model_quantized.onnx, which is the file the
       // wasm backend's default dtype (q8) resolves to. Picking a model that is
       // missing that file makes the pipeline 404 on load.
-      generator = await pipeline(
+      generatorPromise = pipeline(
         "text-generation",
         "HuggingFaceTB/SmolLM2-135M-Instruct"
       );
     }
-    return generator;
+    return generatorPromise;
   }
 
   class AI {
