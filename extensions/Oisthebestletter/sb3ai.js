@@ -39,6 +39,7 @@ function workerMain() {
   let pipeline;
   let classifierPromise;
   let generatorPromise;
+  let unmaskerPromise;
   let imageClassifierPromise;
   let objectDetectorPromise;
 
@@ -57,6 +58,13 @@ function workerMain() {
       );
     }
     return generatorPromise;
+  }
+
+  async function getUnmasker() {
+    if (!unmaskerPromise) {
+      unmaskerPromise = pipeline("fill-mask", "Xenova/bert-base-uncased");
+    }
+    return unmaskerPromise;
   }
 
   async function getImageClassifier() {
@@ -106,6 +114,12 @@ function workerMain() {
           const generator = await getGenerator();
           const output = await generator(payload.messages);
           result = output[0].generated_text.at(-1).content;
+          break;
+        }
+
+        case "unmask": {
+          const unmasker = await getUnmasker();
+          result = (await unmasker(payload.text))[0];
           break;
         }
 
@@ -331,6 +345,17 @@ getWorker().onmessage = ({ data }) => {
             },
           },
           {
+            opcode: "unmask",
+            blockType: Scratch.BlockType.REPORTER,
+            text: "unmask [MASKED_TEXT]",
+            arguments: {
+              MASKED_TEXT: {
+                type: Scratch.ArgumentType.STRING,
+                defaultValue: "I like to eat [MASK].",
+              },
+            },
+          },
+          {
             opcode: "stageimg",
             blockType: Scratch.BlockType.REPORTER,
             text: "Stage data URI",
@@ -382,6 +407,14 @@ getWorker().onmessage = ({ data }) => {
       return JSON.stringify(
         await workerRequest("classify", {
           text: TEXT,
+        })
+      );
+    }
+
+    async unmask({ MASKED_TEXT }) {
+      return JSON.stringify(
+        await workerRequest("unmask", {
+          text: MASKED_TEXT,
         })
       );
     }
