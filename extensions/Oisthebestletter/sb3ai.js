@@ -217,7 +217,7 @@ getWorker().onmessage = ({ data }) => {
   }
 
   function snapshotStage() {
-    const renderer = window.vm.renderer;
+    const renderer = Scratch.vm.runtime.renderer;
 
     return new Promise((resolve) => {
       renderer.requestSnapshot(resolve);
