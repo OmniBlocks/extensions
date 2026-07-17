@@ -49,6 +49,15 @@ async function importVerifiedModule(url, expectedIntegrity) {
 }
 
 (async () => {
+  function snapshotStage() {
+    const renderer = window.vm.renderer;
+
+    return new Promise((resolve) => {
+      renderer.requestSnapshot(resolve);
+      renderer.draw();
+    });
+  }
+
   const url = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0";
 
   const hash =
@@ -60,6 +69,8 @@ async function importVerifiedModule(url, expectedIntegrity) {
 
   let classifierPromise;
   let generatorPromise;
+  let imageClassifierPromise;
+
   let systemPrompt = "";
 
   async function getClassifier() {
@@ -80,6 +91,16 @@ async function importVerifiedModule(url, expectedIntegrity) {
       );
     }
     return generatorPromise;
+  }
+
+  async function getImageClassifier() {
+    if (!imageClassifierPromise) {
+      imageClassifierPromise = pipeline(
+        "image-classification",
+        "Xenova/vit-base-patch16-224"
+      );
+    }
+    return imageClassifierPromise;
   }
 
   class AI {
@@ -108,6 +129,23 @@ async function importVerifiedModule(url, expectedIntegrity) {
               PROMPT: {
                 type: Scratch.ArgumentType.STRING,
                 defaultValue: "Who was Alan Turing?",
+              },
+            },
+          },
+          {
+            opcode: "stageimg",
+            blockType: Scratch.BlockType.REPORTER,
+            text: "Stage data URI",
+          },
+          {
+            opcode: "classifyImage",
+            blockType: Scratch.BlockType.REPORTER,
+            text: "classify image [IMAGE]",
+            arguments: {
+              IMAGE: {
+                type: Scratch.ArgumentType.STRING,
+                defaultValue:
+                  "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/cats.png",
               },
             },
           },
@@ -154,6 +192,15 @@ async function importVerifiedModule(url, expectedIntegrity) {
       const result = await generator(messages);
 
       return result[0].generated_text.at(-1).content;
+    }
+
+    async stageimg() {
+      return await snapshotStage();
+    }
+
+    async classifyImage({ IMAGE }) {
+      const classifier = await getImageClassifier();
+      return JSON.stringify(await classifier(IMAGE));
     }
 
     setSystemPrompt({ PROMPT }) {
