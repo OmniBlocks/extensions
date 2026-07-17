@@ -262,7 +262,7 @@ getWorker().onmessage = ({ data }) => {
     return { context: overlayContext, width: rect.width, height: rect.height };
   }
 
-  function clearDetectionOverlay() {
+  function _clearDetectionOverlay() {
     if (!overlayCanvas || !overlayContext) return;
 
     overlayContext.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
@@ -469,7 +469,7 @@ getWorker().onmessage = ({ data }) => {
     }
 
     clearDetectionOverlay() {
-      clearDetectionOverlay();
+      _clearDetectionOverlay();
     }
 
     setSystemPrompt({ PROMPT }) {
