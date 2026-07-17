@@ -40,6 +40,7 @@ function workerMain() {
   let classifierPromise;
   let generatorPromise;
   let imageClassifierPromise;
+  let objectDetectorPromise;
 
   async function getClassifier() {
     if (!classifierPromise) {
@@ -66,6 +67,16 @@ function workerMain() {
       );
     }
     return imageClassifierPromise;
+  }
+
+  async function getObjectDetector() {
+    if (!objectDetectorPromise) {
+      objectDetectorPromise = pipeline(
+        "object-detection",
+        "Xenova/detr-resnet-50"
+      );
+    }
+    return objectDetectorPromise;
   }
 
   self.onmessage = async ({ data }) => {
@@ -101,6 +112,17 @@ function workerMain() {
         case "classifyImage": {
           const classifier = await getImageClassifier();
           result = await classifier(payload.image);
+          break;
+        }
+
+        case "detectObjects": {
+          const detector = await getObjectDetector();
+
+          result = await detector(payload.image, {
+            threshold: payload.threshold,
+            percentage: true,
+          });
+
           break;
         }
 
@@ -189,6 +211,84 @@ getWorker().onmessage = ({ data }) => {
     });
   }
 
+  let overlayCanvas;
+  let overlayContext;
+
+  function getOverlayContext() {
+    const stageCanvas = Scratch.vm.runtime.renderer.canvas;
+    const rect = stageCanvas.getBoundingClientRect();
+    const pixelRatio = window.devicePixelRatio || 1;
+
+    if (!overlayCanvas) {
+      overlayCanvas = document.createElement("canvas");
+      overlayCanvas.style.position = "fixed";
+      overlayCanvas.style.pointerEvents = "none";
+      overlayCanvas.style.zIndex = "1000";
+      document.body.appendChild(overlayCanvas);
+
+      overlayContext = overlayCanvas.getContext("2d");
+    }
+
+    // Keep the overlay aligned when the stage is resized or moved.
+    overlayCanvas.style.left = `${rect.left}px`;
+    overlayCanvas.style.top = `${rect.top}px`;
+    overlayCanvas.style.width = `${rect.width}px`;
+    overlayCanvas.style.height = `${rect.height}px`;
+
+    const width = Math.round(rect.width * pixelRatio);
+    const height = Math.round(rect.height * pixelRatio);
+
+    if (overlayCanvas.width !== width || overlayCanvas.height !== height) {
+      overlayCanvas.width = width;
+      overlayCanvas.height = height;
+    }
+
+    overlayContext.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+
+    return { context: overlayContext, width: rect.width, height: rect.height };
+  }
+
+  function clearDetectionOverlay() {
+    if (!overlayCanvas || !overlayContext) return;
+
+    overlayContext.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  }
+
+  function drawDetections(detections) {
+    const { context, width, height } = getOverlayContext();
+
+    context.clearRect(0, 0, width, height);
+    context.lineWidth = 3;
+    context.font = "bold 14px sans-serif";
+    context.textBaseline = "top";
+
+    for (const { label, score, box } of detections) {
+      const x = box.xmin * width;
+      const y = box.ymin * height;
+      const boxWidth = (box.xmax - box.xmin) * width;
+      const boxHeight = (box.ymax - box.ymin) * height;
+
+      const caption = `${label} (${Math.round(score * 100)}%)`;
+
+      context.strokeStyle = "#00e676";
+      context.strokeRect(x, y, boxWidth, boxHeight);
+
+      const captionWidth = context.measureText(caption).width;
+      const captionHeight = 18;
+
+      context.fillStyle = "#00e676";
+      context.fillRect(
+        x,
+        Math.max(0, y - captionHeight),
+        captionWidth + 8,
+        captionHeight
+      );
+
+      context.fillStyle = "#000";
+      context.fillText(caption, x + 4, Math.max(0, y - captionHeight + 2));
+    }
+  }
+
   const url = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0";
 
   const hash =
@@ -248,6 +348,22 @@ getWorker().onmessage = ({ data }) => {
             },
           },
           {
+            opcode: "detectStageAndDraw",
+            blockType: Scratch.BlockType.COMMAND,
+            text: "detect objects on stage and draw boxes with confidence [THRESHOLD]%",
+            arguments: {
+              THRESHOLD: {
+                type: Scratch.ArgumentType.NUMBER,
+                defaultValue: 50,
+              },
+            },
+          },
+          {
+            opcode: "clearDetectionOverlay",
+            blockType: Scratch.BlockType.COMMAND,
+            text: "clear detection boxes",
+          },
+          {
             opcode: "setSystemPrompt",
             blockType: Scratch.BlockType.COMMAND,
             text: "set AI system prompt to [PROMPT]",
@@ -300,6 +416,27 @@ getWorker().onmessage = ({ data }) => {
           image: IMAGE,
         })
       );
+    }
+
+    async detectStageAndDraw({ THRESHOLD }) {
+      const threshold = Math.max(
+        0,
+        Math.min(1, Scratch.Cast.toNumber(THRESHOLD) / 100)
+      );
+
+      // This captures the renderer canvas only, not the DOM overlay.
+      const stageImage = await snapshotStage();
+
+      const detections = await workerRequest("detectObjects", {
+        image: stageImage,
+        threshold,
+      });
+
+      drawDetections(detections);
+    }
+
+    clearDetectionOverlay() {
+      clearDetectionOverlay();
     }
 
     setSystemPrompt({ PROMPT }) {
