@@ -175,6 +175,11 @@ getWorker().onmessage = ({ data }) => {
 };
 
 (async () => {
+  if (!Scratch.extensions.unsandboxed) {
+    alert("SB3.AI must be ran unsandboxed!");
+    throw new Error("SB3.AI must run unsandboxed");
+  }
+
   function snapshotStage() {
     const renderer = window.vm.renderer;
 
